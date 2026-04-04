@@ -6,6 +6,7 @@ import { SessionLobby } from '@/components/lobby/SessionLobby';
 import { CharacterCreation } from '@/components/character/CharacterCreation';
 import { GameView } from '@/components/game/GameView';
 import { Button } from '@/components/ui/Button';
+import { HowToPlay } from '@/components/ui/HowToPlay';
 import { useGameStore } from '@/store/game-store';
 import * as api from '@/lib/api-client';
 
@@ -72,6 +73,7 @@ export default function Home() {
           </div>
         </div>
         <AuthForm />
+        <HowToPlay />
       </div>
     );
   }
@@ -95,6 +97,7 @@ export default function Home() {
           </div>
         </div>
         <GameView sessionId={session.id} />
+        <HowToPlay />
       </div>
     );
   }
@@ -171,6 +174,7 @@ export default function Home() {
           </div>
         )}
       </div>
+      <HowToPlay />
     </div>
   );
 }

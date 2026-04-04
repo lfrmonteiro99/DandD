@@ -98,6 +98,10 @@ export function CharacterCreation({ sessionId }: { sessionId: string }) {
 
         {/* Step 0: Race */}
         {step === 0 && (
+          <div className="space-y-4">
+          <div className="bg-blue-900/20 border border-blue-800/30 rounded-lg p-3 text-sm text-blue-200">
+            <strong>New to D&D?</strong> Your race gives stat bonuses and special traits. <strong>Human</strong> is the simplest choice — bonus to everything. <strong>Elf</strong> and <strong>Halfling</strong> are great for Rogues (DEX bonus). <strong>Dwarf</strong> is perfect for Fighters and Clerics (CON bonus = more HP).
+          </div>
           <div className="grid grid-cols-2 gap-4">
             {(Object.entries(RACES) as [Race, typeof RACES[Race]][]).map(([id, r]) => (
               <button
@@ -126,10 +130,15 @@ export function CharacterCreation({ sessionId }: { sessionId: string }) {
               </button>
             ))}
           </div>
+          </div>
         )}
 
         {/* Step 1: Class */}
         {step === 1 && (
+          <div className="space-y-4">
+          <div className="bg-blue-900/20 border border-blue-800/30 rounded-lg p-3 text-sm text-blue-200">
+            <strong>New to D&D?</strong> Your class determines your combat role. <strong>Fighter</strong> is the easiest to play — just attack! <strong>Cleric</strong> heals and fights. <strong>Rogue</strong> deals burst damage via Sneak Attack. <strong>Wizard</strong> has powerful spells but is fragile.
+          </div>
           <div className="grid grid-cols-2 gap-4">
             {(Object.entries(CLASSES) as [CharacterClass, typeof CLASSES[CharacterClass]][]).map(([id, c]) => (
               <button
@@ -155,11 +164,21 @@ export function CharacterCreation({ sessionId }: { sessionId: string }) {
               </button>
             ))}
           </div>
+          </div>
         )}
 
         {/* Step 2: Ability Scores */}
         {step === 2 && (
           <div className="space-y-6">
+            {charClass && (
+              <div className="bg-blue-900/20 border border-blue-800/30 rounded-lg p-3 text-sm text-blue-200">
+                <strong>Tip:</strong>{' '}
+                {charClass === 'fighter' && 'Put your 15 in Strength (or Dexterity for a ranged fighter), and your 14 in Constitution for more HP.'}
+                {charClass === 'wizard' && 'Put your 15 in Intelligence (your spellcasting stat), and 14 in Dexterity or Constitution to survive.'}
+                {charClass === 'rogue' && 'Put your 15 in Dexterity (used for attacks, AC, stealth, and initiative), and 14 in Constitution.'}
+                {charClass === 'cleric' && 'Put your 15 in Wisdom (your spellcasting stat), and 14 in Constitution or Strength.'}
+              </div>
+            )}
             <p className="text-gray-400 text-center">
               Assign the Standard Array values to your abilities. Click a value, then click an ability.
             </p>
