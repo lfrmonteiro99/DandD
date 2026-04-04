@@ -14,7 +14,7 @@ export async function GET() {
 
   const checks: Record<string, unknown> = {
     status: 'ok',
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY ? 'set' : 'MISSING',
+    GEMINI_API_KEY: (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) ? 'set' : 'MISSING',
     JWT_SECRET: process.env.JWT_SECRET ? 'set' : 'MISSING',
     redis_url: url ? `found (${url.slice(0, 20)}...)` : 'MISSING',
     redis_token: token ? 'found' : 'MISSING',

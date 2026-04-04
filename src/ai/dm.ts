@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GameState, DMResponse, MonsterActionDecision, NPC, Scene } from '../engine/types';
 import {
   SYSTEM_PROMPT, NARRATION_PROMPT, COMBAT_NARRATION_PROMPT,
@@ -11,32 +11,32 @@ import {
   buildPartyDescription, fillTemplate,
 } from './context-builder';
 
-let _client: OpenAI | null = null;
-function getClient(): OpenAI {
-  if (!_client) {
-    _client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _genAI: GoogleGenerativeAI | null = null;
+function getGenAI(): GoogleGenerativeAI {
+  if (!_genAI) {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+    _genAI = new GoogleGenerativeAI(apiKey);
   }
-  return _client;
+  return _genAI;
 }
 
-const MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
-const MAX_TOKENS = 1024;
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
 async function callAI(userMessage: string): Promise<string> {
   try {
-    const response = await getClient().chat.completions.create({
+    const model = getGenAI().getGenerativeModel({
       model: MODEL,
-      max_tokens: MAX_TOKENS,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
-      ],
-      response_format: { type: 'json_object' },
+      systemInstruction: SYSTEM_PROMPT,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        maxOutputTokens: 1024,
+      },
     });
 
-    return response.choices[0]?.message?.content || '{}';
+    const result = await model.generateContent(userMessage);
+    return result.response.text() || '{}';
   } catch (error) {
-    console.error('OpenAI API error:', error);
+    console.error('Gemini API error:', error);
     return '{}';
   }
 }
