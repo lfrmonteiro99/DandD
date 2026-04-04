@@ -101,8 +101,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Generate opening scene with AI
-    const { scene, narration, mood } = await generateStartingScene(game.getState());
+    // Generate opening scene with AI (with fallback)
+    let scene, narration, mood;
+    try {
+      const aiResult = await generateStartingScene(game.getState());
+      scene = aiResult.scene;
+      narration = aiResult.narration;
+      mood = aiResult.mood;
+    } catch (err) {
+      console.error('AI scene generation failed, using fallback:', err);
+      scene = {
+        id: 'scene_' + Date.now(),
+        name: 'The Crossroads Inn',
+        description: 'A weathered stone inn stands at a crossroads, its wooden sign creaking in the wind. Warm light spills from the windows and the smell of roasted meat fills the air.',
+        type: 'interior' as const,
+        npcs: [{
+          id: 'npc_innkeeper',
+          name: 'Old Barley',
+          description: 'A grizzled innkeeper with a knowing smile',
+          disposition: 'friendly' as const,
+          personality: 'warm, talkative',
+          dialogue_history: [],
+        }],
+        monsters_present: [],
+        exits: [
+          { direction: 'outside', description: 'The road continues into dark woods' },
+          { direction: 'upstairs', description: 'Creaky stairs lead to the rooms above' },
+          { direction: 'cellar', description: 'A trapdoor behind the bar leads down' },
+        ],
+      };
+      narration = 'You find yourselves gathered in the common room of the Crossroads Inn. A fire crackles in the hearth, and Old Barley the innkeeper polishes a mug behind the bar. "Adventurers, eh?" he says with a knowing look. "You\'ve come at an interesting time. Strange noises have been coming from the cellar at night, and travelers on the east road have gone missing." He leans in closer. "There might be coin in it for brave folk like yourselves."';
+      mood = 'atmospheric';
+    }
     game.startGame(scene, narration);
 
     // Add NPCs to game state
