@@ -23,7 +23,7 @@ function getGenAI(): GoogleGenerativeAI {
   return _genAI;
 }
 
-const MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite';
 
 async function callAI(userMessage: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;

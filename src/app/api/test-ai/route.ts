@@ -15,7 +15,7 @@ export async function GET() {
   // Test 1: Simple text generation (no JSON mode)
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
     const result = await model.generateContent('Say "hello world" in a fun way. One sentence only.');
     const text = result.response.text();
     results.test1_simple = { success: true, response: text };
@@ -27,7 +27,7 @@ export async function GET() {
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.0-flash-lite',
       generationConfig: {
         responseMimeType: 'application/json',
       },
@@ -51,7 +51,7 @@ export async function GET() {
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.0-flash-lite',
       systemInstruction: 'You are a D&D dungeon master. Always respond in valid JSON.',
       generationConfig: {
         responseMimeType: 'application/json',
