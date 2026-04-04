@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { GameState, DMResponse, MonsterActionDecision, NPC, Scene } from '../engine/types';
 import {
   SYSTEM_PROMPT, NARRATION_PROMPT, COMBAT_NARRATION_PROMPT,
@@ -11,24 +11,32 @@ import {
   buildPartyDescription, fillTemplate,
 } from './context-builder';
 
-const client = new Anthropic();
+let _client: OpenAI | null = null;
+function getClient(): OpenAI {
+  if (!_client) {
+    _client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _client;
+}
 
-const MODEL = 'claude-sonnet-4-6';
+const MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const MAX_TOKENS = 1024;
 
-async function callClaude(userMessage: string): Promise<string> {
+async function callAI(userMessage: string): Promise<string> {
   try {
-    const response = await client.messages.create({
+    const response = await getClient().chat.completions.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userMessage },
+      ],
+      response_format: { type: 'json_object' },
     });
 
-    const textBlock = response.content.find(b => b.type === 'text');
-    return textBlock?.text || '{}';
+    return response.choices[0]?.message?.content || '{}';
   } catch (error) {
-    console.error('Claude API error:', error);
+    console.error('OpenAI API error:', error);
     return '{}';
   }
 }
@@ -60,7 +68,7 @@ export async function generateNarration(
     characters: buildCharacterSummary(state.characters),
   });
 
-  const response = await callClaude(prompt);
+  const response = await callAI(prompt);
   return parseJSON<DMResponse>(response, {
     narration: `${playerName} attempts to ${playerAction}. The result is uncertain...`,
     dm_decisions: {},
@@ -83,7 +91,7 @@ export async function generateCombatNarration(
     result,
   });
 
-  const response = await callClaude(prompt);
+  const response = await callAI(prompt);
   const parsed = parseJSON<{ narration: string }>(response, { narration: '' });
   return parsed.narration || `${attackerName} ${action} ${targetName}. ${result}`;
 }
@@ -112,7 +120,7 @@ export async function decideMonsterAction(
     targets,
   });
 
-  const response = await callClaude(prompt);
+  const response = await callAI(prompt);
   const decision = parseJSON<MonsterActionDecision>(response, {
     monster_id: monsterId,
     action: 'attack',
@@ -146,7 +154,7 @@ export async function generateNPCDialogue(
     dialogue_history: npc.dialogue_history.slice(-5).join('\n') || 'None',
   });
 
-  const response = await callClaude(prompt);
+  const response = await callAI(prompt);
   return parseJSON(response, {
     dialogue: `${npc.name} regards you thoughtfully but says nothing.`,
   });
@@ -159,7 +167,7 @@ export async function generateStartingScene(
     party_description: buildPartyDescription(state.characters),
   });
 
-  const response = await callClaude(prompt);
+  const response = await callAI(prompt);
   const parsed = parseJSON(response, {
     scene: {
       name: 'The Rusty Tankard Tavern',
@@ -216,7 +224,7 @@ export async function generateScene(
     trigger,
   });
 
-  const response = await callClaude(prompt);
+  const response = await callAI(prompt);
   const parsed = parseJSON(response, {
     scene: {
       name: 'Unknown Area',
