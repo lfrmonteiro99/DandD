@@ -12,8 +12,37 @@ import { Character, GameState } from '@/engine/types';
 export function GameView({ sessionId }: { sessionId: string }) {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
-  const { gameState, setGameState, myCharacter, narration, addNarration, pendingCheck, setPendingCheck } = useGameStore();
+  const { gameState, setGameState, myCharacter, narration, addNarration, pendingCheck, setPendingCheck, auth } = useGameStore();
+
+  // Load narration from game state log on first render
+  useEffect(() => {
+    if (initialized || !gameState) return;
+    setInitialized(true);
+
+    // If narration is empty but game state has log entries, restore them
+    if (narration.length === 0 && gameState.recent_log && gameState.recent_log.length > 0) {
+      for (const entry of gameState.recent_log) {
+        if (entry.type === 'narration') {
+          addNarration(entry.content);
+        } else if (entry.type === 'player_action' && entry.actor_name) {
+          addNarration(`**You:** ${entry.content.replace(entry.actor_name + ': ', '')}`);
+        } else if (entry.type === 'dialogue') {
+          addNarration(entry.content);
+        } else if (entry.type === 'combat_action') {
+          addNarration(entry.content);
+        } else if (entry.type === 'system') {
+          addNarration(`*${entry.content}*`);
+        }
+      }
+    }
+
+    // If still no narration and we have a scene, show scene description
+    if (narration.length === 0 && gameState.scene) {
+      addNarration(gameState.scene.description);
+    }
+  }, [gameState, initialized, narration.length, addNarration]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -44,6 +73,9 @@ export function GameView({ sessionId }: { sessionId: string }) {
       const data = await api.sendAction(sessionId, 'free_text', text);
       if (data.narration) {
         addNarration(data.narration);
+      } else if (data.state) {
+        // No narration but state updated — show a generic response
+        addNarration('The DM considers your action...');
       }
       if (data.check_required) {
         setPendingCheck(data.check_required);
