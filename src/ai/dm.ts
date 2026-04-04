@@ -23,7 +23,7 @@ function getGenAI(): GoogleGenerativeAI {
   return _genAI;
 }
 
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 
 async function callAI(userMessage: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
@@ -32,27 +32,39 @@ async function callAI(userMessage: string): Promise<string> {
     return '';
   }
 
-  try {
-    const model = getGenAI().getGenerativeModel({
-      model: MODEL,
-      systemInstruction: SYSTEM_PROMPT,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        maxOutputTokens: 2048,
-      },
-    });
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const model = getGenAI().getGenerativeModel({
+        model: MODEL,
+        systemInstruction: SYSTEM_PROMPT,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          maxOutputTokens: 2048,
+        },
+      });
 
-    const result = await model.generateContent(userMessage);
-    const text = result.response.text();
-    if (!text || text.trim() === '') {
-      console.error('Gemini returned empty response');
+      const result = await model.generateContent(userMessage);
+      const text = result.response.text();
+      if (!text || text.trim() === '') {
+        console.error('Gemini returned empty response');
+        return '';
+      }
+      return text;
+    } catch (error: any) {
+      const isRateLimit = error?.message?.includes('429') || error?.message?.includes('quota');
+      if (isRateLimit && attempt < maxRetries) {
+        // Wait and retry on rate limit
+        const delay = (attempt + 1) * 5000; // 5s, 10s
+        console.warn(`Gemini rate limited, retrying in ${delay}ms (attempt ${attempt + 1})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      console.error(`Gemini API error (attempt ${attempt + 1}):`, error?.message || error);
       return '';
     }
-    return text;
-  } catch (error) {
-    console.error('Gemini API error:', error);
-    return '';
   }
+  return '';
 }
 
 /**
