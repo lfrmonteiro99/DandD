@@ -57,12 +57,16 @@ export function CharacterCreation({ sessionId }: { sessionId: string }) {
     setError('');
 
     try {
+      const abilities: Record<string, number> = {};
+      for (const [key, val] of Object.entries(scores)) {
+        abilities[key] = val as number;
+      }
       const data = await api.createCharacter({
         session_id: sessionId,
         name,
         race,
         character_class: charClass,
-        abilities: scores as unknown as Record<string, number>,
+        abilities,
       });
       setMyCharacter(data.character);
     } catch (err: any) {

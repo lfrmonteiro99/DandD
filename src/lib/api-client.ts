@@ -3,19 +3,29 @@ const BASE_URL = '';
 async function fetchAPI(path: string, options: RequestInit = {}) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 
-  const response = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+  } catch (err: any) {
+    throw new Error(`Network error: ${err.message}`);
+  }
 
-  const data = await response.json();
+  let data: any;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(`Server error (${response.status}): invalid response`);
+  }
 
   if (!response.ok) {
-    throw new Error(data.error || 'API request failed');
+    throw new Error(data.error || `API error (${response.status})`);
   }
 
   return data;
