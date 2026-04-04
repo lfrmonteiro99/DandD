@@ -80,8 +80,38 @@ export async function POST(req: NextRequest) {
       companionsAdded++;
     }
 
-    // Generate opening scene
-    const { scene, narration, mood } = await generateStartingScene(game.getState());
+    // Generate opening scene (with fallback if AI fails or returns bad data)
+    let scene, narration, mood;
+    try {
+      const aiResult = await generateStartingScene(game.getState());
+      scene = aiResult.scene;
+      narration = aiResult.narration;
+      mood = aiResult.mood;
+    } catch (err) {
+      console.error('AI scene generation failed, using fallback:', err);
+      scene = {
+        id: 'scene_' + Date.now(),
+        name: 'The Crossroads Inn',
+        description: 'A weathered stone inn stands at a crossroads. Warm light spills from the windows and the smell of roasted meat fills the air.',
+        type: 'interior' as const,
+        npcs: [{
+          id: 'npc_innkeeper',
+          name: 'Old Barley',
+          description: 'A grizzled innkeeper with a knowing smile',
+          disposition: 'friendly' as const,
+          personality: 'warm, talkative',
+          dialogue_history: [] as string[],
+        }],
+        monsters_present: [] as string[],
+        exits: [
+          { direction: 'outside', description: 'The road continues into dark woods' },
+          { direction: 'upstairs', description: 'Creaky stairs lead to rooms above' },
+          { direction: 'cellar', description: 'A trapdoor behind the bar leads down' },
+        ],
+      };
+      narration = 'You find yourselves gathered in the common room of the Crossroads Inn. A fire crackles in the hearth, and Old Barley the innkeeper polishes a mug behind the bar. "Adventurers, eh?" he says. "Strange noises from the cellar, travelers gone missing on the east road. There might be coin in it for brave folk like yourselves."';
+      mood = 'atmospheric';
+    }
 
     // Set scene, NPCs, and start game — all in one state update
     const state = game.getState();
