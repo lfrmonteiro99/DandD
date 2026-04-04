@@ -67,9 +67,9 @@ export async function listSessions() {
 }
 
 export async function joinSession(sessionId: string) {
-  return fetchAPI(`/api/sessions`, {
+  return fetchAPI('/api/sessions/join', {
     method: 'POST',
-    body: JSON.stringify({ join: sessionId }),
+    body: JSON.stringify({ session_id: sessionId }),
   });
 }
 
