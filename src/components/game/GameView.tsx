@@ -56,7 +56,8 @@ export function GameView({ sessionId }: { sessionId: string }) {
       }
       setLastRenderedLogIndex(log.length - 1);
     }
-  }, [gameState?.recent_log?.length]);
+    // Track by last entry timestamp to detect content changes even when length is capped
+  }, [gameState?.recent_log?.length, gameState?.recent_log?.[gameState?.recent_log?.length - 1]?.timestamp]);
 
   // Auto-scroll
   useEffect(() => {
