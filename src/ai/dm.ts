@@ -15,6 +15,9 @@ let _genAI: GoogleGenerativeAI | null = null;
 function getGenAI(): GoogleGenerativeAI {
   if (!_genAI) {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+    if (!apiKey) {
+      console.error('WARNING: No GEMINI_API_KEY or GOOGLE_API_KEY set');
+    }
     _genAI = new GoogleGenerativeAI(apiKey);
   }
   return _genAI;
@@ -23,29 +26,63 @@ function getGenAI(): GoogleGenerativeAI {
 const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
 async function callAI(userMessage: string): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    console.error('Gemini API key not configured');
+    return '';
+  }
+
   try {
     const model = getGenAI().getGenerativeModel({
       model: MODEL,
       systemInstruction: SYSTEM_PROMPT,
       generationConfig: {
         responseMimeType: 'application/json',
-        maxOutputTokens: 1024,
+        maxOutputTokens: 2048,
       },
     });
 
     const result = await model.generateContent(userMessage);
-    return result.response.text() || '{}';
+    const text = result.response.text();
+    if (!text || text.trim() === '') {
+      console.error('Gemini returned empty response');
+      return '';
+    }
+    return text;
   } catch (error) {
     console.error('Gemini API error:', error);
-    return '{}';
+    return '';
   }
 }
 
-function parseJSON<T>(text: string, fallback: T): T {
+/**
+ * Parse JSON with validation. Returns fallback if:
+ * - text is empty
+ * - JSON parse fails
+ * - parsed result is empty object {}
+ * - parsed result is missing required fields (checked via requiredField)
+ */
+function parseJSON<T>(text: string, fallback: T, requiredField?: string): T {
+  if (!text || text.trim() === '') {
+    return fallback;
+  }
   try {
-    // Extract JSON from possible markdown code blocks
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, text];
-    return JSON.parse(jsonMatch[1] || text);
+    const raw = jsonMatch[1] || text;
+    const parsed = JSON.parse(raw);
+
+    // Check for empty object
+    if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length === 0) {
+      return fallback;
+    }
+
+    // Check for required field
+    if (requiredField && !(requiredField in parsed)) {
+      console.error(`AI response missing required field "${requiredField}":`, raw.slice(0, 200));
+      return fallback;
+    }
+
+    return parsed as T;
   } catch {
     console.error('Failed to parse AI response:', text.slice(0, 200));
     return fallback;
@@ -69,11 +106,18 @@ export async function generateNarration(
   });
 
   const response = await callAI(prompt);
-  return parseJSON<DMResponse>(response, {
+  const result = parseJSON<DMResponse>(response, {
     narration: `${playerName} attempts to ${playerAction}. The result is uncertain...`,
     dm_decisions: {},
     mood: 'neutral',
-  });
+  }, 'narration');
+
+  // Double-check narration is non-empty
+  if (!result.narration || result.narration.trim() === '') {
+    result.narration = `${playerName} attempts to ${playerAction}. The result is uncertain...`;
+  }
+
+  return result;
 }
 
 export async function generateCombatNarration(
@@ -92,7 +136,9 @@ export async function generateCombatNarration(
   });
 
   const response = await callAI(prompt);
-  const parsed = parseJSON<{ narration: string }>(response, { narration: '' });
+  const parsed = parseJSON<{ narration: string }>(response, {
+    narration: `${attackerName} ${action} ${targetName}. ${result}`,
+  }, 'narration');
   return parsed.narration || `${attackerName} ${action} ${targetName}. ${result}`;
 }
 
@@ -109,6 +155,8 @@ export async function decideMonsterAction(
   );
 
   const monsterData = state.combat.monsters.find(m => m.id === monsterId);
+  const alivePlayers = Object.values(state.characters).filter(c => c.current_hp > 0);
+  const defaultTarget = alivePlayers[Math.floor(Math.random() * alivePlayers.length)]?.id || '';
 
   const prompt = fillTemplate(MONSTER_ACTION_PROMPT, {
     round: state.combat.round.toString(),
@@ -124,17 +172,14 @@ export async function decideMonsterAction(
   const decision = parseJSON<MonsterActionDecision>(response, {
     monster_id: monsterId,
     action: 'attack',
-    target_id: Object.keys(state.characters)[0] || '',
+    target_id: defaultTarget,
     attack_name: monsterData?.attacks[0]?.name,
-  });
+  }, 'monster_id');
 
   // Validate target exists and is alive
   const targetChar = decision.target_id ? state.characters[decision.target_id] : undefined;
   if (!targetChar || targetChar.current_hp <= 0) {
-    const alivePlayers = Object.values(state.characters).filter(c => c.current_hp > 0);
-    if (alivePlayers.length > 0) {
-      decision.target_id = alivePlayers[Math.floor(Math.random() * alivePlayers.length)].id;
-    }
+    decision.target_id = defaultTarget;
   }
 
   return decision;
@@ -157,7 +202,7 @@ export async function generateNPCDialogue(
   const response = await callAI(prompt);
   return parseJSON(response, {
     dialogue: `${npc.name} regards you thoughtfully but says nothing.`,
-  });
+  }, 'dialogue');
 }
 
 export async function generateStartingScene(
@@ -168,7 +213,7 @@ export async function generateStartingScene(
   });
 
   const response = await callAI(prompt);
-  const parsed = parseJSON(response, {
+  const fallbackScene = {
     scene: {
       name: 'The Rusty Tankard Tavern',
       description: 'A dimly lit tavern with the smell of ale and roasted meat. A crackling fire warms the common room where a few patrons sit nursing their drinks.',
@@ -184,25 +229,32 @@ export async function generateStartingScene(
         { direction: 'upstairs', description: 'Wooden stairs lead to the guest rooms' },
       ],
     },
-    narration: 'You find yourselves gathered in a dimly lit tavern, drawn together by rumor of adventure. The innkeeper approaches with a knowing smile...',
+    narration: 'You find yourselves gathered in a dimly lit tavern, drawn together by rumor of adventure. The innkeeper approaches with a knowing smile. "Adventurers, eh?" she says. "You\'ve come at an interesting time. Strange noises have been coming from the cellar at night, and travelers on the east road have gone missing. There might be coin in it for brave folk like yourselves."',
     mood: 'atmospheric',
-  });
+  };
+
+  const parsed = parseJSON(response, fallbackScene, 'scene');
+
+  // Ensure narration exists
+  if (!parsed.narration || parsed.narration.trim() === '') {
+    parsed.narration = fallbackScene.narration;
+  }
 
   const scene: Scene = {
     id: 'scene_' + Date.now(),
-    name: parsed.scene.name,
-    description: parsed.scene.description,
-    type: parsed.scene.type as Scene['type'],
-    npcs: (parsed.scene.npcs || []).map((npc: any) => ({
+    name: parsed.scene?.name || fallbackScene.scene.name,
+    description: parsed.scene?.description || fallbackScene.scene.description,
+    type: (parsed.scene?.type as Scene['type']) || 'interior',
+    npcs: (parsed.scene?.npcs || fallbackScene.scene.npcs).map((npc: any) => ({
       id: 'npc_' + Math.random().toString(36).slice(2, 8),
       name: npc.name,
-      description: npc.description,
+      description: npc.description || '',
       disposition: npc.disposition || 'neutral',
       personality: npc.personality || 'reserved',
       dialogue_history: [],
     })),
     monsters_present: [],
-    exits: parsed.scene.exits || [],
+    exits: parsed.scene?.exits || fallbackScene.scene.exits,
   };
 
   return {
@@ -225,7 +277,7 @@ export async function generateScene(
   });
 
   const response = await callAI(prompt);
-  const parsed = parseJSON(response, {
+  const fallback = {
     scene: {
       name: 'Unknown Area',
       description: 'You enter a new area.',
@@ -235,14 +287,17 @@ export async function generateScene(
     },
     narration: 'You move forward into uncharted territory...',
     mood: 'mysterious',
-  });
+  };
+
+  const parsed = parseJSON(response, fallback, 'scene');
+  if (!parsed.narration) parsed.narration = fallback.narration;
 
   const scene: Scene = {
     id: 'scene_' + Date.now(),
-    name: parsed.scene.name,
-    description: parsed.scene.description,
-    type: parsed.scene.type as Scene['type'],
-    npcs: (parsed.scene.npcs || []).map((npc: any) => ({
+    name: parsed.scene?.name || fallback.scene.name,
+    description: parsed.scene?.description || fallback.scene.description,
+    type: (parsed.scene?.type as Scene['type']) || 'wilderness',
+    npcs: (parsed.scene?.npcs || []).map((npc: any) => ({
       id: 'npc_' + Math.random().toString(36).slice(2, 8),
       name: npc.name,
       description: npc.description || '',
@@ -251,7 +306,7 @@ export async function generateScene(
       dialogue_history: [],
     })),
     monsters_present: [],
-    exits: parsed.scene.exits || [],
+    exits: parsed.scene?.exits || fallback.scene.exits,
   };
 
   return { scene, narration: parsed.narration, mood: parsed.mood || 'mysterious' };

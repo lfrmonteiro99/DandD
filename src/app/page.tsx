@@ -14,6 +14,7 @@ export default function Home() {
   const {
     auth, setAuth, session, setSession, setGameState,
     myCharacter, setMyCharacter, gameState, addNarration,
+    clearNarration,
   } = useGameStore();
   const [loading, setLoading] = useState(false);
   const [sessionView, setSessionView] = useState<'lobby' | 'character' | 'waiting' | 'game'>('lobby');
@@ -37,33 +38,27 @@ export default function Home() {
     if (!savedSessionId) return;
 
     api.getGameState(savedSessionId).then(data => {
-      if (data.session) {
+      if (data.session && data.game_state) {
+        // Set BOTH session and gameState together to avoid race
+        setGameState(data.game_state);
         setSession(data.session);
-        if (data.game_state) {
-          setGameState(data.game_state);
-          // Find our character
-          for (const char of Object.values(data.game_state.characters || {}) as any[]) {
-            if (char.user_id === auth.userId) {
-              setMyCharacter(char);
-              break;
-            }
-          }
-          // Restore narration
-          if (data.game_state.recent_log) {
-            for (const entry of data.game_state.recent_log) {
-              if (entry.type === 'narration' || entry.type === 'dialogue' || entry.type === 'combat_action') {
-                addNarration(entry.content);
-              }
-            }
+
+        // Find our character
+        for (const char of Object.values(data.game_state.characters || {}) as any[]) {
+          if (char.user_id === auth.userId) {
+            setMyCharacter(char);
+            break;
           }
         }
+      } else if (data.session) {
+        setSession(data.session);
       }
     }).catch(() => {
       localStorage.removeItem('session_id');
     });
-  }, [auth.userId, session, setSession, setGameState, setMyCharacter, addNarration]);
+  }, [auth.userId, session, setSession, setGameState, setMyCharacter]);
 
-  // Save session ID to localStorage whenever it changes
+  // Save session ID to localStorage
   useEffect(() => {
     if (session) {
       localStorage.setItem('session_id', session.id);
@@ -72,42 +67,16 @@ export default function Home() {
     }
   }, [session]);
 
-  // When session is set, try to load existing character from server
-  useEffect(() => {
-    if (!session || !auth.userId) return;
-    // Check if current player already has a character
-    const player = session.players.find(p => p.user_id === auth.userId);
-    if (player?.character_id && !myCharacter) {
-      // Try to fetch game state which includes characters
-      api.getGameState(session.id).then(data => {
-        if (data.game_state?.characters) {
-          for (const char of Object.values(data.game_state.characters) as any[]) {
-            if (char.user_id === auth.userId) {
-              setMyCharacter(char);
-              break;
-            }
-          }
-        }
-        if (data.game_state) setGameState(data.game_state);
-        if (data.session) setSession(data.session);
-      }).catch(() => {
-        // Game state might not exist yet
-      });
-    }
-  }, [session, auth.userId, myCharacter, setMyCharacter, setGameState, setSession]);
-
-  // Determine view based on state
+  // Determine view
   useEffect(() => {
     if (!session) {
       setSessionView('lobby');
-    } else if (session.status === 'in_progress' || (gameState && gameState.phase !== 'lobby' && gameState.phase !== 'character_creation')) {
+    } else if (session.status === 'in_progress' && gameState && gameState.phase !== 'lobby' && gameState.phase !== 'character_creation') {
       setSessionView('game');
     } else if (!myCharacter) {
-      // Check if player already has a character_id in the session
       const player = session.players.find(p => p.user_id === auth.userId);
       if (player?.character_id) {
-        // Character exists on server but not loaded locally yet — show waiting
-        setSessionView('waiting');
+        setSessionView('waiting'); // Character exists on server, loading
       } else {
         setSessionView('character');
       }
@@ -115,6 +84,19 @@ export default function Home() {
       setSessionView('waiting');
     }
   }, [session, myCharacter, gameState, auth.userId]);
+
+  function handleLeave() {
+    setSession(null);
+    setGameState(null);
+    setMyCharacter(null);
+    clearNarration();
+  }
+
+  function handleLogout() {
+    setAuth({ token: null, userId: null, username: null });
+    localStorage.removeItem('token');
+    handleLeave();
+  }
 
   async function handleStartGame() {
     if (!session) return;
@@ -151,7 +133,7 @@ export default function Home() {
     );
   }
 
-  // Authenticated, in a game session
+  // In game
   if (sessionView === 'game' && session && gameState) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -163,9 +145,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-400">{auth.username}</span>
-            <Button variant="ghost" size="sm" onClick={() => { setSession(null); setGameState(null); setMyCharacter(null); }}>
-              Leave
-            </Button>
+            <Button variant="ghost" size="sm" onClick={handleLeave}>Leave</Button>
           </div>
         </div>
         <GameView sessionId={session.id} />
@@ -174,9 +154,8 @@ export default function Home() {
     );
   }
 
-  // How many players have characters
   const readyPlayers = session?.players.filter(p => p.character_id).length || 0;
-  const canStart = readyPlayers >= 1; // Only need 1 player to start!
+  const canStart = readyPlayers >= 1;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -184,9 +163,7 @@ export default function Home() {
         <h1 className="text-amber-400 font-bold text-xl">D&D Arena</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-400">{auth.username}</span>
-          <Button variant="ghost" size="sm" onClick={() => { setAuth({ token: null, userId: null, username: null }); localStorage.removeItem('token'); setSession(null); setMyCharacter(null); }}>
-            Logout
-          </Button>
+          <Button variant="ghost" size="sm" onClick={handleLogout}>Logout</Button>
         </div>
       </div>
 
@@ -250,7 +227,7 @@ export default function Home() {
               )}
             </div>
 
-            <Button variant="ghost" onClick={() => { setSession(null); setMyCharacter(null); }}>Leave Session</Button>
+            <Button variant="ghost" onClick={handleLeave}>Leave Session</Button>
           </div>
         )}
       </div>

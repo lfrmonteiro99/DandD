@@ -1,5 +1,5 @@
 import { GameLoop, GameEventCallback } from './game-loop';
-import { GameSession, Character, Scene } from '../engine/types';
+import { GameSession, Character } from '../engine/types';
 import { db } from '../lib/db';
 
 class SessionManager {
@@ -14,22 +14,38 @@ class SessionManager {
     this.eventCallbacks.delete(sessionId);
   }
 
+  /**
+   * Get or create a GameLoop for a session.
+   * On cold start (serverless), restores full state from Redis:
+   * - Game state (phase, scene, combat, NPCs, log)
+   * - All characters (player + AI companions)
+   */
   async getOrCreateGame(sessionId: string): Promise<GameLoop> {
     let game = this.activeGames.get(sessionId);
-    if (!game) {
-      const callback: GameEventCallback = (sid, event, data) => {
-        const cb = this.eventCallbacks.get(sid);
-        if (cb) cb(sid, event, data);
-      };
-      game = new GameLoop(sessionId, callback);
-      this.activeGames.set(sessionId, game);
+    if (game) return game;
 
-      // Restore state if exists
-      const savedState = await db.getGameState(sessionId);
-      if (savedState) {
-        game.setState(savedState);
+    const callback: GameEventCallback = (sid, event, data) => {
+      const cb = this.eventCallbacks.get(sid);
+      if (cb) cb(sid, event, data);
+    };
+    game = new GameLoop(sessionId, callback);
+    this.activeGames.set(sessionId, game);
+
+    // Restore state from Redis
+    const savedState = await db.getGameState(sessionId);
+    if (savedState) {
+      game.setState(savedState);
+
+      // Ensure characters are populated (they're part of savedState,
+      // but if state was saved with empty characters, reload from DB)
+      if (Object.keys(savedState.characters || {}).length === 0) {
+        const chars = await db.getCharactersBySession(sessionId);
+        for (const c of chars) {
+          game.addCharacter(c);
+        }
       }
     }
+
     return game;
   }
 
@@ -109,7 +125,6 @@ class SessionManager {
     if (!session) return { success: false, error: 'Session not found' };
     if (session.status !== 'lobby') return { success: false, error: 'Session already started' };
 
-    // At least one player must have a character
     const playersWithCharacters = session.players.filter(p => p.character_id !== null);
     if (playersWithCharacters.length === 0) {
       return { success: false, error: 'At least one player must create a character before starting' };
@@ -122,6 +137,7 @@ class SessionManager {
     };
     await db.updateSession(updated);
 
+    // Load characters into game — this is the ONLY place characters are added on start
     const game = await this.getOrCreateGame(sessionId);
     for (const player of session.players) {
       if (player.character_id) {

@@ -5,7 +5,6 @@ import { sessionManager } from '@/server/session-manager';
 import { generateNarration, decideMonsterAction } from '@/ai/dm';
 import { getCurrentTurnEntity } from '@/engine/combat';
 
-// POST /api/game/action — Process a player action (with AI DM)
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
@@ -17,41 +16,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'session_id required' }, { status: 400 });
     }
 
-    const session = await db.getSession(session_id);
-    if (!session) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-    }
-
     const character = await db.getCharacterByUserId(auth.user_id, session_id);
     if (!character) {
       return NextResponse.json({ error: 'No character in session' }, { status: 400 });
     }
 
+    // getOrCreateGame handles full state restoration from Redis
     const game = await sessionManager.getOrCreateGame(session_id);
-    let state = game.getState();
+    const state = game.getState();
 
-    // Ensure characters are loaded into game state (serverless may have fresh instance)
+    // Ensure this character is in the game state
     if (!state.characters[character.id]) {
       game.addCharacter(character);
-      // Also reload AI companions
-      const allChars = await db.getCharactersBySession(session_id);
-      for (const c of allChars) {
-        if (!state.characters[c.id]) {
-          game.addCharacter(c);
-        }
-      }
-      state = game.getState();
     }
 
-    // If game phase is lobby, it wasn't started properly
-    if (state.phase === 'lobby') {
-      return NextResponse.json({
-        error: 'Game has not started yet',
-        state,
-      }, { status: 400 });
+    if (state.phase === 'lobby' || state.phase === 'character_creation') {
+      return NextResponse.json({ error: 'Game has not started yet' }, { status: 400 });
     }
 
-    // Handle combat actions
+    // === COMBAT ===
     if (state.phase === 'combat') {
       const result = await game.processAction({
         player_id: character.id,
@@ -64,6 +47,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
 
+      // Process monster turns if needed
       const updatedState = game.getState();
       if (updatedState.combat) {
         const current = getCurrentTurnEntity(updatedState.combat);
@@ -72,41 +56,32 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      await game.saveState();
       return NextResponse.json({ state: game.getState() });
     }
 
-    // Handle exploration / social — free text actions
+    // === EXPLORATION / SOCIAL ===
     const actionText = text || action_type;
     if (!actionText) {
       return NextResponse.json({ error: 'No action text provided' }, { status: 400 });
     }
 
     // Log the player action
-    game.processAction({
+    await game.processAction({
       player_id: character.id,
       action_type: 'free_text',
       details: { text: actionText },
     });
 
-    // Get AI DM response
-    let narration: string;
-    let dmResponse;
-    try {
-      dmResponse = await generateNarration(state, actionText, character.name);
-      narration = dmResponse.narration || `${character.name} ${actionText}. The DM considers what happens next...`;
-    } catch (err) {
-      console.error('AI narration failed:', err);
-      narration = `${character.name} attempts to ${actionText}. The world around you stirs in response...`;
-      dmResponse = { narration, dm_decisions: {}, mood: 'neutral' };
-    }
+    // Get AI DM response using FRESH state (includes player action in log)
+    const freshState = game.getState();
+    const dmResponse = await generateNarration(freshState, actionText, character.name);
 
-    // Ensure narration is never empty
-    if (!narration || narration.trim() === '') {
-      narration = `You ${actionText}. The dungeon master nods thoughtfully...`;
-    }
+    // narration is guaranteed non-empty by generateNarration
+    const narration = dmResponse.narration;
 
     // Apply DM decisions
-    if (dmResponse?.dm_decisions?.encounter_trigger) {
+    if (dmResponse.dm_decisions?.encounter_trigger) {
       const enc = dmResponse.dm_decisions.encounter_trigger;
       game.addNarration(narration, dmResponse.mood);
       game.startCombat(enc.monsters, enc.description || narration);
@@ -118,9 +93,10 @@ export async function POST(req: NextRequest) {
           await processMonsterTurns(game);
         }
       }
-    } else if (dmResponse?.dm_decisions?.check_required) {
+    } else if (dmResponse.dm_decisions?.check_required) {
       const check = dmResponse.dm_decisions.check_required;
       game.addNarration(narration, dmResponse.mood);
+      await game.saveState();
       return NextResponse.json({
         state: game.getState(),
         narration,
@@ -131,19 +107,22 @@ export async function POST(req: NextRequest) {
         },
       });
     } else {
-      game.addNarration(narration, dmResponse?.mood);
-      if (dmResponse?.dm_decisions?.scene_changes?.description && state.scene) {
+      game.addNarration(narration, dmResponse.mood);
+      if (dmResponse.dm_decisions?.scene_changes?.description && freshState.scene) {
         game.updateScene({
-          ...state.scene,
+          ...freshState.scene,
           description: dmResponse.dm_decisions.scene_changes.description,
         });
       }
     }
 
+    // CRITICAL: Await persist
+    await game.saveState();
+
     return NextResponse.json({
       state: game.getState(),
       narration,
-      mood: dmResponse?.mood || 'neutral',
+      mood: dmResponse.mood || 'neutral',
     });
   } catch (error) {
     console.error('Game action error:', error);
@@ -178,7 +157,6 @@ async function processMonsterTurns(game: Awaited<ReturnType<typeof sessionManage
         attack_name: decision.attack_name,
       });
     } catch {
-      // AI failed for monster, just do a basic attack
       const aliveTargets = Object.values(state.characters).filter(c => c.current_hp > 0);
       const target = aliveTargets[0];
       if (target) {

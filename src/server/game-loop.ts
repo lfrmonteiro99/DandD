@@ -40,11 +40,22 @@ export class GameLoop {
 
   setState(state: GameState) {
     this.state = state;
-    this.persist();
   }
 
+  /** Fire-and-forget persist for non-critical internal updates */
   private persist() {
-    db.saveGameState(this.sessionId, this.state).catch(() => {});
+    db.saveGameState(this.sessionId, this.state).catch(err => {
+      console.error(`Failed to persist game state for session ${this.sessionId}:`, err);
+    });
+  }
+
+  /** Awaitable persist — call from API routes after critical operations */
+  async saveState(): Promise<void> {
+    try {
+      await db.saveGameState(this.sessionId, this.state);
+    } catch (err) {
+      console.error(`Failed to save game state for session ${this.sessionId}:`, err);
+    }
   }
 
   private emit(event: string, data: unknown) {

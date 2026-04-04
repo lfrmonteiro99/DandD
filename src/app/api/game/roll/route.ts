@@ -4,7 +4,6 @@ import { db } from '@/lib/db';
 import { sessionManager } from '@/server/session-manager';
 import { generateNarration } from '@/ai/dm';
 
-// POST /api/game/roll — Process a skill check roll
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
@@ -23,29 +22,22 @@ export async function POST(req: NextRequest) {
     const result = game.processSkillCheck(character.id, skill, dc || 10);
 
     // Get narration for the result
-    const state = game.getState();
+    const freshState = game.getState();
     const actionDesc = result.success
       ? `succeeded on a ${skill} check (rolled ${result.total} vs DC ${dc})`
       : `failed a ${skill} check (rolled ${result.total} vs DC ${dc})`;
 
-    let narrationText: string;
-    try {
-      const dmResponse = await generateNarration(state, actionDesc, character.name);
-      narrationText = dmResponse.narration;
-      game.addNarration(dmResponse.narration, dmResponse.mood);
-    } catch {
-      narrationText = result.success
-        ? `${character.name} succeeds! (Rolled ${result.total} vs DC ${dc})`
-        : `${character.name} fails. (Rolled ${result.total} vs DC ${dc})`;
-      game.addNarration(narrationText);
-    }
+    const dmResponse = await generateNarration(freshState, actionDesc, character.name);
+    game.addNarration(dmResponse.narration, dmResponse.mood);
+
+    await game.saveState();
 
     return NextResponse.json({
       success: result.success,
       roll: result.roll,
       total: result.total,
       dc,
-      narration: narrationText,
+      narration: dmResponse.narration,
       state: game.getState(),
     });
   } catch (error) {
