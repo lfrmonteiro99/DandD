@@ -16,10 +16,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'session_id and skill required' }, { status: 400 });
     }
 
-    const character = db.getCharacterByUserId(auth.user_id, session_id);
+    const character = await db.getCharacterByUserId(auth.user_id, session_id);
     if (!character) return NextResponse.json({ error: 'No character found' }, { status: 400 });
 
-    const game = sessionManager.getOrCreateGame(session_id);
+    const game = await sessionManager.getOrCreateGame(session_id);
     const result = game.processSkillCheck(character.id, skill, dc || 10);
 
     // Get narration for the result
