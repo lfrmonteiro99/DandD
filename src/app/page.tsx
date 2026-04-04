@@ -30,6 +30,48 @@ export default function Home() {
     }
   }, [setAuth]);
 
+  // Auto-reconnect to saved session on page load
+  useEffect(() => {
+    if (!auth.userId || session) return;
+    const savedSessionId = localStorage.getItem('session_id');
+    if (!savedSessionId) return;
+
+    api.getGameState(savedSessionId).then(data => {
+      if (data.session) {
+        setSession(data.session);
+        if (data.game_state) {
+          setGameState(data.game_state);
+          // Find our character
+          for (const char of Object.values(data.game_state.characters || {}) as any[]) {
+            if (char.user_id === auth.userId) {
+              setMyCharacter(char);
+              break;
+            }
+          }
+          // Restore narration
+          if (data.game_state.recent_log) {
+            for (const entry of data.game_state.recent_log) {
+              if (entry.type === 'narration' || entry.type === 'dialogue' || entry.type === 'combat_action') {
+                addNarration(entry.content);
+              }
+            }
+          }
+        }
+      }
+    }).catch(() => {
+      localStorage.removeItem('session_id');
+    });
+  }, [auth.userId, session, setSession, setGameState, setMyCharacter, addNarration]);
+
+  // Save session ID to localStorage whenever it changes
+  useEffect(() => {
+    if (session) {
+      localStorage.setItem('session_id', session.id);
+    } else {
+      localStorage.removeItem('session_id');
+    }
+  }, [session]);
+
   // When session is set, try to load existing character from server
   useEffect(() => {
     if (!session || !auth.userId) return;
