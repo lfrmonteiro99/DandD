@@ -1,13 +1,12 @@
 /**
- * Persistent key-value database using Vercel KV (Redis).
+ * Persistent database using Upstash Redis.
  * Falls back to in-memory for local development.
  *
- * Vercel KV setup:
- *   1. Go to Vercel Dashboard → Storage → Create → KV
- *   2. Connect it to your project (auto-sets env vars)
- *   3. That's it — KV_REST_API_URL and KV_REST_API_TOKEN are set automatically
+ * Setup: Vercel Dashboard → Storage → Upstash → Create Redis DB → Connect to project.
+ * Env vars UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are set automatically.
  */
 
+import { Redis } from '@upstash/redis';
 import { GameSession, Character, GameState, GameLogEntry } from '../engine/types';
 
 interface User {
@@ -19,138 +18,133 @@ interface User {
 }
 
 // ===========================
-// Vercel KV Client
+// Redis Client
 // ===========================
 
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
-const USE_KV = !!(KV_URL && KV_TOKEN);
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const USE_REDIS = !!(UPSTASH_URL && UPSTASH_TOKEN);
 
-async function kvGet<T>(key: string): Promise<T | null> {
-  if (!USE_KV) return memoryStore.get(key) as T | null;
-  try {
-    const res = await fetch(`${KV_URL}/get/${key}`, {
-      headers: { Authorization: `Bearer ${KV_TOKEN}` },
-    });
-    const data = await res.json();
-    if (data.result === null) return null;
-    return typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
-  } catch {
-    return memoryStore.get(key) as T | null;
+let _redis: Redis | null = null;
+function getRedis(): Redis | null {
+  if (!USE_REDIS) return null;
+  if (!_redis) {
+    _redis = new Redis({ url: UPSTASH_URL!, token: UPSTASH_TOKEN! });
   }
+  return _redis;
 }
 
-async function kvSet(key: string, value: unknown, exSeconds?: number): Promise<void> {
-  memoryStore.set(key, value); // Always keep in memory as cache
-  if (!USE_KV) return;
-  try {
-    const body = exSeconds
-      ? ['SET', key, JSON.stringify(value), 'EX', exSeconds.toString()]
-      : ['SET', key, JSON.stringify(value)];
-    await fetch(`${KV_URL}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${KV_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    console.error('KV set error:', err);
-  }
-}
-
-async function kvDel(key: string): Promise<void> {
-  memoryStore.delete(key);
-  if (!USE_KV) return;
-  try {
-    await fetch(`${KV_URL}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${KV_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(['DEL', key]),
-    });
-  } catch (err) {
-    console.error('KV del error:', err);
-  }
-}
-
-async function kvKeys(pattern: string): Promise<string[]> {
-  if (!USE_KV) {
-    const prefix = pattern.replace('*', '');
-    return Array.from(memoryStore.keys()).filter(k => k.startsWith(prefix));
-  }
-  try {
-    const res = await fetch(`${KV_URL}/keys/${pattern}`, {
-      headers: { Authorization: `Bearer ${KV_TOKEN}` },
-    });
-    const data = await res.json();
-    return data.result || [];
-  } catch {
-    const prefix = pattern.replace('*', '');
-    return Array.from(memoryStore.keys()).filter(k => k.startsWith(prefix));
-  }
-}
-
-// In-memory fallback (for local dev or when KV is not configured)
-const memoryStore = new Map<string, unknown>();
-
-// ===========================
-// Database API (async)
-// ===========================
+// In-memory fallback (local dev)
+const mem = new Map<string, unknown>();
 
 const EXPIRY = 86400; // 24 hours
+
+async function kGet<T>(key: string): Promise<T | null> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      return await redis.get<T>(key);
+    } catch {
+      return mem.get(key) as T ?? null;
+    }
+  }
+  return mem.get(key) as T ?? null;
+}
+
+async function kSet(key: string, value: unknown): Promise<void> {
+  mem.set(key, value);
+  const redis = getRedis();
+  if (redis) {
+    try {
+      await redis.set(key, value, { ex: EXPIRY });
+    } catch (err) {
+      console.error('Redis set error:', err);
+    }
+  }
+}
+
+async function kDel(key: string): Promise<void> {
+  mem.delete(key);
+  const redis = getRedis();
+  if (redis) {
+    try {
+      await redis.del(key);
+    } catch {}
+  }
+}
+
+async function kKeys(pattern: string): Promise<string[]> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const keys: string[] = [];
+      let cursor = 0;
+      do {
+        const [nextCursor, batch] = await redis.scan(cursor, { match: pattern, count: 100 });
+        cursor = Number(nextCursor);
+        keys.push(...batch);
+      } while (cursor !== 0);
+      return keys;
+    } catch {
+      // fallback
+    }
+  }
+  const prefix = pattern.replace('*', '');
+  return Array.from(mem.keys()).filter(k => k.startsWith(prefix));
+}
+
+// ===========================
+// Database API
+// ===========================
 
 export const db = {
   // Users
   async createUser(user: User): Promise<User> {
-    await kvSet(`user:${user.id}`, user, EXPIRY);
-    await kvSet(`user:email:${user.email}`, user.id, EXPIRY);
-    await kvSet(`user:username:${user.username}`, user.id, EXPIRY);
+    await kSet(`user:${user.id}`, user);
+    await kSet(`user:email:${user.email}`, user.id);
+    await kSet(`user:username:${user.username}`, user.id);
     return user;
   },
 
   async getUserById(id: string): Promise<User | null> {
-    return kvGet<User>(`user:${id}`);
+    return kGet<User>(`user:${id}`);
   },
 
   async getUserByEmail(email: string): Promise<User | null> {
-    const id = await kvGet<string>(`user:email:${email}`);
+    const id = await kGet<string>(`user:email:${email}`);
     if (!id) return null;
-    return kvGet<User>(`user:${id}`);
+    return kGet<User>(`user:${id}`);
   },
 
   async getUserByUsername(username: string): Promise<User | null> {
-    const id = await kvGet<string>(`user:username:${username}`);
+    const id = await kGet<string>(`user:username:${username}`);
     if (!id) return null;
-    return kvGet<User>(`user:${id}`);
+    return kGet<User>(`user:${id}`);
   },
 
   // Sessions
   async createSession(session: GameSession): Promise<GameSession> {
-    await kvSet(`session:${session.id}`, session, EXPIRY);
-    await kvSet(`session:list:${session.id}`, session.id, EXPIRY);
+    await kSet(`session:${session.id}`, session);
+    await kSet(`session:list:${session.id}`, session.id);
     return session;
   },
 
   async getSession(id: string): Promise<GameSession | null> {
-    return kvGet<GameSession>(`session:${id}`);
+    return kGet<GameSession>(`session:${id}`);
   },
 
   async updateSession(session: GameSession): Promise<GameSession> {
-    await kvSet(`session:${session.id}`, session, EXPIRY);
+    await kSet(`session:${session.id}`, session);
     return session;
   },
 
   async listSessions(): Promise<GameSession[]> {
-    const keys = await kvKeys('session:list:*');
+    const keys = await kKeys('session:list:*');
     const sessions: GameSession[] = [];
     for (const key of keys) {
-      const id = await kvGet<string>(key);
+      const id = await kGet<string>(key);
       if (id) {
-        const session = await kvGet<GameSession>(`session:${id}`);
+        const session = await kGet<GameSession>(`session:${id}`);
         if (session) sessions.push(session);
       }
     }
@@ -159,28 +153,28 @@ export const db = {
 
   // Characters
   async createCharacter(character: Character): Promise<Character> {
-    await kvSet(`char:${character.id}`, character, EXPIRY);
-    await kvSet(`char:user:${character.user_id}:${character.session_id}`, character.id, EXPIRY);
-    await kvSet(`char:session:${character.session_id}:${character.id}`, character.id, EXPIRY);
+    await kSet(`char:${character.id}`, character);
+    await kSet(`char:user:${character.user_id}:${character.session_id}`, character.id);
+    await kSet(`char:session:${character.session_id}:${character.id}`, character.id);
     return character;
   },
 
   async getCharacter(id: string): Promise<Character | null> {
-    return kvGet<Character>(`char:${id}`);
+    return kGet<Character>(`char:${id}`);
   },
 
   async updateCharacter(character: Character): Promise<Character> {
-    await kvSet(`char:${character.id}`, character, EXPIRY);
+    await kSet(`char:${character.id}`, character);
     return character;
   },
 
   async getCharactersBySession(sessionId: string): Promise<Character[]> {
-    const keys = await kvKeys(`char:session:${sessionId}:*`);
+    const keys = await kKeys(`char:session:${sessionId}:*`);
     const characters: Character[] = [];
     for (const key of keys) {
-      const id = await kvGet<string>(key);
+      const id = await kGet<string>(key);
       if (id) {
-        const char = await kvGet<Character>(`char:${id}`);
+        const char = await kGet<Character>(`char:${id}`);
         if (char) characters.push(char);
       }
     }
@@ -188,31 +182,29 @@ export const db = {
   },
 
   async getCharacterByUserId(userId: string, sessionId: string): Promise<Character | null> {
-    const id = await kvGet<string>(`char:user:${userId}:${sessionId}`);
+    const id = await kGet<string>(`char:user:${userId}:${sessionId}`);
     if (!id) return null;
-    return kvGet<Character>(`char:${id}`);
+    return kGet<Character>(`char:${id}`);
   },
 
   // Game States
   async saveGameState(sessionId: string, state: GameState): Promise<void> {
-    await kvSet(`gamestate:${sessionId}`, state, EXPIRY);
+    await kSet(`gamestate:${sessionId}`, state);
   },
 
   async getGameState(sessionId: string): Promise<GameState | null> {
-    return kvGet<GameState>(`gamestate:${sessionId}`);
+    return kGet<GameState>(`gamestate:${sessionId}`);
   },
 
   // Game Logs
   async addLogEntry(sessionId: string, entry: GameLogEntry): Promise<void> {
-    const logs = await kvGet<GameLogEntry[]>(`gamelog:${sessionId}`) || [];
+    const logs = await kGet<GameLogEntry[]>(`gamelog:${sessionId}`) || [];
     logs.push(entry);
-    // Keep last 200 entries
-    const trimmed = logs.slice(-200);
-    await kvSet(`gamelog:${sessionId}`, trimmed, EXPIRY);
+    await kSet(`gamelog:${sessionId}`, logs.slice(-200));
   },
 
   async getGameLogs(sessionId: string, limit: number = 50): Promise<GameLogEntry[]> {
-    const logs = await kvGet<GameLogEntry[]>(`gamelog:${sessionId}`) || [];
+    const logs = await kGet<GameLogEntry[]>(`gamelog:${sessionId}`) || [];
     return logs.slice(-limit);
   },
 };
