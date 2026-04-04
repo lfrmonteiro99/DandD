@@ -21,37 +21,44 @@ interface User {
 // Redis Client
 // ===========================
 
-// Auto-detect Upstash env vars (Vercel creates them with various prefixes)
-function findEnv(...candidates: string[]): string | undefined {
+// Find the REST API URL (must start with https://)
+function findRestUrl(): string | undefined {
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value && value.startsWith('https://') && key.toUpperCase().includes('UPSTASH')) {
+      return value;
+    }
+  }
+  // Also check standard names
+  return process.env.KV_REST_API_URL || undefined;
+}
+
+// Find the REST API TOKEN (not read-only, not a URL)
+function findRestToken(): string | undefined {
+  // Try exact known names first (most specific to least)
+  const candidates = [
+    'UPSTASH_REDIS_REST_TOKEN',
+    'UPSTASH_REDIS_REST_KV_REST_API_TOKEN',
+    'KV_REST_API_TOKEN',
+  ];
   for (const name of candidates) {
     if (process.env[name]) return process.env[name];
   }
-  // Fallback: scan all env vars for matching patterns
+  // Fallback: find any UPSTASH var with TOKEN that isn't READ_ONLY
   for (const [key, value] of Object.entries(process.env)) {
-    for (const candidate of candidates) {
-      const suffix = candidate.split('_').slice(-1)[0]; // URL or TOKEN
-      if (key.toUpperCase().includes('UPSTASH') && key.toUpperCase().endsWith(suffix) && value) {
-        return value;
-      }
+    if (
+      value &&
+      key.toUpperCase().includes('UPSTASH') &&
+      key.toUpperCase().includes('TOKEN') &&
+      !key.toUpperCase().includes('READ_ONLY')
+    ) {
+      return value;
     }
   }
   return undefined;
 }
 
-const UPSTASH_URL = findEnv(
-  'UPSTASH_REDIS_REST_URL',
-  'KV_REST_API_URL',
-  'UPSTASH_REDIS_REST_KV_REST_URL',
-  'UPSTASH_REDIS_REST_KV_URL',
-  'UPSTASH_REDIS_REST_REDIS_URL'
-);
-const UPSTASH_TOKEN = findEnv(
-  'UPSTASH_REDIS_REST_TOKEN',
-  'KV_REST_API_TOKEN',
-  'UPSTASH_REDIS_REST_KV_REST_TOKEN',
-  'UPSTASH_REDIS_REST_KV_TOKEN',
-  'UPSTASH_REDIS_REST_REDIS_TOKEN'
-);
+const UPSTASH_URL = findRestUrl();
+const UPSTASH_TOKEN = findRestToken();
 const USE_REDIS = !!(UPSTASH_URL && UPSTASH_TOKEN);
 
 let _redis: Redis | null = null;
