@@ -18,7 +18,8 @@ export function SessionLobby() {
   const [newSessionName, setNewSessionName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { auth, setSession } = useGameStore();
+  const [error, setError] = useState('');
+  const { auth, setSession, setMyCharacter, setGameState, addNarration } = useGameStore();
 
   useEffect(() => {
     loadSessions();
@@ -37,11 +38,12 @@ export function SessionLobby() {
     e.preventDefault();
     if (!newSessionName.trim()) return;
     setLoading(true);
+    setError('');
     try {
       const data = await api.createSession(newSessionName.trim());
       setSession(data.session);
-    } catch (err) {
-      console.error('Failed to create session:', err);
+    } catch (err: any) {
+      setError(err.message || 'Failed to create session');
     } finally {
       setLoading(false);
     }
@@ -49,12 +51,40 @@ export function SessionLobby() {
 
   async function handleJoin(sessionId: string) {
     setLoading(true);
+    setError('');
     try {
-      // Use the session route to join
-      const data = await api.getGameState(sessionId);
-      setSession(data.session);
-    } catch (err) {
-      console.error('Failed to join session:', err);
+      // Actually join the session
+      const joinData = await api.joinSession(sessionId);
+      const session = joinData.session;
+      setSession(session);
+
+      // Check if we already have a character in this session
+      try {
+        const stateData = await api.getGameState(sessionId);
+        if (stateData.game_state) {
+          setGameState(stateData.game_state);
+          // Find our character
+          const characters = stateData.game_state.characters || {};
+          for (const char of Object.values(characters) as any[]) {
+            if (char.user_id === auth.userId) {
+              setMyCharacter(char);
+              break;
+            }
+          }
+          // If game is already in progress, load narration
+          if (stateData.game_state.phase !== 'lobby' && stateData.game_state.recent_log) {
+            for (const entry of stateData.game_state.recent_log) {
+              if (entry.type === 'narration') addNarration(entry.content);
+            }
+          }
+        }
+        // Update session with latest data
+        if (stateData.session) setSession(stateData.session);
+      } catch {
+        // Game state might not exist yet, that's fine
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to join session');
     } finally {
       setLoading(false);
     }
@@ -71,6 +101,10 @@ export function SessionLobby() {
           </Button>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-red-900/30 border border-red-800 rounded-lg p-3 text-red-300 text-sm">{error}</div>
+      )}
 
       {showCreate && (
         <form onSubmit={handleCreate} className="bg-gray-900/80 border border-gray-800 rounded-xl p-6">
@@ -117,7 +151,7 @@ export function SessionLobby() {
                 onClick={() => handleJoin(session.id)}
                 variant={session.status === 'lobby' ? 'primary' : 'secondary'}
                 size="sm"
-                disabled={session.status !== 'lobby' && session.player_count >= session.max_players}
+                loading={loading}
               >
                 {session.status === 'lobby' ? 'Join' : 'Reconnect'}
               </Button>

@@ -109,9 +109,10 @@ class SessionManager {
     if (!session) return { success: false, error: 'Session not found' };
     if (session.status !== 'lobby') return { success: false, error: 'Session already started' };
 
-    const allHaveCharacters = session.players.every(p => p.character_id !== null);
-    if (!allHaveCharacters) {
-      return { success: false, error: 'All players must create characters before starting' };
+    // At least one player must have a character
+    const playersWithCharacters = session.players.filter(p => p.character_id !== null);
+    if (playersWithCharacters.length === 0) {
+      return { success: false, error: 'At least one player must create a character before starting' };
     }
 
     const updated: GameSession = {
