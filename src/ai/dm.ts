@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import { GameState, DMResponse, MonsterActionDecision, NPC, Scene } from '../engine/types';
 import {
   SYSTEM_PROMPT, NARRATION_PROMPT, COMBAT_NARRATION_PROMPT,
@@ -23,13 +24,54 @@ function getGenAI(): GoogleGenerativeAI {
   return _genAI;
 }
 
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI | null {
+  if (!_openai) {
+    const apiKey = process.env.OPENAI_API_KEY || '';
+    if (!apiKey) return null;
+    _openai = new OpenAI({ apiKey });
+  }
+  return _openai;
+}
+
 const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
+async function callOpenAIFallback(userMessage: string): Promise<string> {
+  const openai = getOpenAI();
+  if (!openai) {
+    console.error('OpenAI fallback unavailable: no OPENAI_API_KEY set');
+    return '';
+  }
+
+  try {
+    console.warn('Falling back to OpenAI (text-only)');
+    const response = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      max_tokens: 2048,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT + '\n\nIMPORTANT: Always respond with valid JSON only, no markdown formatting.' },
+        { role: 'user', content: userMessage },
+      ],
+    });
+
+    const text = response.choices[0]?.message?.content || '';
+    if (!text || text.trim() === '') {
+      console.error('OpenAI returned empty response');
+      return '';
+    }
+    return text;
+  } catch (error: any) {
+    console.error('OpenAI fallback error:', error?.message || error);
+    return '';
+  }
+}
 
 async function callAI(userMessage: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    console.error('Gemini API key not configured');
-    return '';
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!geminiKey) {
+    console.error('Gemini API key not configured, trying OpenAI fallback');
+    return callOpenAIFallback(userMessage);
   }
 
   const maxRetries = 2;
@@ -48,23 +90,23 @@ async function callAI(userMessage: string): Promise<string> {
       const text = result.response.text();
       if (!text || text.trim() === '') {
         console.error('Gemini returned empty response');
-        return '';
+        return callOpenAIFallback(userMessage);
       }
       return text;
     } catch (error: any) {
       const isRateLimit = error?.message?.includes('429') || error?.message?.includes('quota');
       if (isRateLimit && attempt < maxRetries) {
-        // Wait and retry on rate limit
         const delay = (attempt + 1) * 5000; // 5s, 10s
         console.warn(`Gemini rate limited, retrying in ${delay}ms (attempt ${attempt + 1})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
       console.error(`Gemini API error (attempt ${attempt + 1}):`, error?.message || error);
-      return '';
     }
   }
-  return '';
+
+  // All Gemini attempts failed — fall back to OpenAI
+  return callOpenAIFallback(userMessage);
 }
 
 /**
