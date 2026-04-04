@@ -13,14 +13,43 @@ export async function POST(req: NextRequest) {
   try {
     const { session_id, action_type, target_id, text } = await req.json();
 
+    if (!session_id) {
+      return NextResponse.json({ error: 'session_id required' }, { status: 400 });
+    }
+
     const session = await db.getSession(session_id);
-    if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    if (!session) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    }
 
     const character = await db.getCharacterByUserId(auth.user_id, session_id);
-    if (!character) return NextResponse.json({ error: 'No character in session' }, { status: 400 });
+    if (!character) {
+      return NextResponse.json({ error: 'No character in session' }, { status: 400 });
+    }
 
     const game = await sessionManager.getOrCreateGame(session_id);
-    const state = game.getState();
+    let state = game.getState();
+
+    // Ensure characters are loaded into game state (serverless may have fresh instance)
+    if (!state.characters[character.id]) {
+      game.addCharacter(character);
+      // Also reload AI companions
+      const allChars = await db.getCharactersBySession(session_id);
+      for (const c of allChars) {
+        if (!state.characters[c.id]) {
+          game.addCharacter(c);
+        }
+      }
+      state = game.getState();
+    }
+
+    // If game phase is lobby, it wasn't started properly
+    if (state.phase === 'lobby') {
+      return NextResponse.json({
+        error: 'Game has not started yet',
+        state,
+      }, { status: 400 });
+    }
 
     // Handle combat actions
     if (state.phase === 'combat') {
@@ -35,7 +64,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
 
-      // If it's now a monster's turn, process it
       const updatedState = game.getState();
       if (updatedState.combat) {
         const current = getCurrentTurnEntity(updatedState.combat);
@@ -47,75 +75,76 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ state: game.getState() });
     }
 
-    // Handle exploration / social actions
-    if (action_type === 'free_text' && text) {
-      // Process through game engine
-      await game.processAction({
-        player_id: character.id,
-        action_type: 'free_text',
-        details: { text },
-      });
-
-      // Get AI DM response (with fallback)
-      let dmResponse;
-      try {
-        dmResponse = await generateNarration(state, text, character.name);
-      } catch (err) {
-        console.error('AI narration failed, using fallback:', err);
-        dmResponse = {
-          narration: `${character.name} attempts to ${text}. The world around you responds...`,
-          dm_decisions: {},
-          mood: 'neutral',
-        };
-      }
-
-      // Apply DM decisions
-      if (dmResponse.dm_decisions?.encounter_trigger) {
-        const enc = dmResponse.dm_decisions.encounter_trigger;
-        game.addNarration(dmResponse.narration, dmResponse.mood);
-        game.startCombat(enc.monsters, enc.description || dmResponse.narration);
-
-        // Process any monster turns at the start
-        const combatState = game.getState();
-        if (combatState.combat) {
-          const current = getCurrentTurnEntity(combatState.combat);
-          if (current.entity_type === 'monster') {
-            await processMonsterTurns(game);
-          }
-        }
-      } else if (dmResponse.dm_decisions?.check_required) {
-        const check = dmResponse.dm_decisions.check_required;
-        game.addNarration(dmResponse.narration, dmResponse.mood);
-        return NextResponse.json({
-          state: game.getState(),
-          narration: dmResponse.narration,
-          check_required: {
-            skill: check.skill,
-            dc: check.dc,
-            player_id: check.player_id || character.id,
-          },
-        });
-      } else {
-        game.addNarration(dmResponse.narration, dmResponse.mood);
-        if (dmResponse.dm_decisions?.scene_changes?.description) {
-          const currentScene = state.scene;
-          if (currentScene) {
-            game.updateScene({
-              ...currentScene,
-              description: dmResponse.dm_decisions.scene_changes.description,
-            });
-          }
-        }
-      }
-
-      return NextResponse.json({
-        state: game.getState(),
-        narration: dmResponse.narration,
-        mood: dmResponse.mood,
-      });
+    // Handle exploration / social — free text actions
+    const actionText = text || action_type;
+    if (!actionText) {
+      return NextResponse.json({ error: 'No action text provided' }, { status: 400 });
     }
 
-    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
+    // Log the player action
+    game.processAction({
+      player_id: character.id,
+      action_type: 'free_text',
+      details: { text: actionText },
+    });
+
+    // Get AI DM response
+    let narration: string;
+    let dmResponse;
+    try {
+      dmResponse = await generateNarration(state, actionText, character.name);
+      narration = dmResponse.narration || `${character.name} ${actionText}. The DM considers what happens next...`;
+    } catch (err) {
+      console.error('AI narration failed:', err);
+      narration = `${character.name} attempts to ${actionText}. The world around you stirs in response...`;
+      dmResponse = { narration, dm_decisions: {}, mood: 'neutral' };
+    }
+
+    // Ensure narration is never empty
+    if (!narration || narration.trim() === '') {
+      narration = `You ${actionText}. The dungeon master nods thoughtfully...`;
+    }
+
+    // Apply DM decisions
+    if (dmResponse?.dm_decisions?.encounter_trigger) {
+      const enc = dmResponse.dm_decisions.encounter_trigger;
+      game.addNarration(narration, dmResponse.mood);
+      game.startCombat(enc.monsters, enc.description || narration);
+
+      const combatState = game.getState();
+      if (combatState.combat) {
+        const current = getCurrentTurnEntity(combatState.combat);
+        if (current.entity_type === 'monster') {
+          await processMonsterTurns(game);
+        }
+      }
+    } else if (dmResponse?.dm_decisions?.check_required) {
+      const check = dmResponse.dm_decisions.check_required;
+      game.addNarration(narration, dmResponse.mood);
+      return NextResponse.json({
+        state: game.getState(),
+        narration,
+        check_required: {
+          skill: check.skill,
+          dc: check.dc,
+          player_id: check.player_id || character.id,
+        },
+      });
+    } else {
+      game.addNarration(narration, dmResponse?.mood);
+      if (dmResponse?.dm_decisions?.scene_changes?.description && state.scene) {
+        game.updateScene({
+          ...state.scene,
+          description: dmResponse.dm_decisions.scene_changes.description,
+        });
+      }
+    }
+
+    return NextResponse.json({
+      state: game.getState(),
+      narration,
+      mood: dmResponse?.mood || 'neutral',
+    });
   } catch (error) {
     console.error('Game action error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -141,12 +170,25 @@ async function processMonsterTurns(game: Awaited<ReturnType<typeof sessionManage
       continue;
     }
 
-    const decision = await decideMonsterAction(state, current.entity_id);
-    game.processMonsterTurn({
-      monster_id: decision.monster_id,
-      target_id: decision.target_id || Object.keys(state.characters)[0] || '',
-      attack_name: decision.attack_name,
-    });
+    try {
+      const decision = await decideMonsterAction(state, current.entity_id);
+      game.processMonsterTurn({
+        monster_id: decision.monster_id,
+        target_id: decision.target_id || Object.keys(state.characters)[0] || '',
+        attack_name: decision.attack_name,
+      });
+    } catch {
+      // AI failed for monster, just do a basic attack
+      const aliveTargets = Object.values(state.characters).filter(c => c.current_hp > 0);
+      const target = aliveTargets[0];
+      if (target) {
+        game.processMonsterTurn({
+          monster_id: current.entity_id,
+          target_id: target.id,
+          attack_name: monster.attacks[0]?.name,
+        });
+      }
+    }
 
     state = game.getState();
     safetyCounter++;
