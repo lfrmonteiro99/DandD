@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'session_id required' }, { status: 400 });
     }
 
-    const { session, error } = sessionManager.joinSession(session_id, auth.user_id, auth.username);
+    const { session, error } = await sessionManager.joinSession(session_id, auth.user_id, auth.username);
     if (error) {
       return NextResponse.json({ error }, { status: 400 });
     }

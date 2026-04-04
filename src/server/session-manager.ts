@@ -14,7 +14,7 @@ class SessionManager {
     this.eventCallbacks.delete(sessionId);
   }
 
-  getOrCreateGame(sessionId: string): GameLoop {
+  async getOrCreateGame(sessionId: string): Promise<GameLoop> {
     let game = this.activeGames.get(sessionId);
     if (!game) {
       const callback: GameEventCallback = (sid, event, data) => {
@@ -25,7 +25,7 @@ class SessionManager {
       this.activeGames.set(sessionId, game);
 
       // Restore state if exists
-      const savedState = db.getGameState(sessionId);
+      const savedState = await db.getGameState(sessionId);
       if (savedState) {
         game.setState(savedState);
       }
@@ -38,12 +38,11 @@ class SessionManager {
     this.eventCallbacks.delete(sessionId);
   }
 
-  joinSession(sessionId: string, userId: string, username: string): { session: GameSession | null; error?: string } {
-    const session = db.getSession(sessionId);
+  async joinSession(sessionId: string, userId: string, username: string): Promise<{ session: GameSession | null; error?: string }> {
+    const session = await db.getSession(sessionId);
     if (!session) return { session: null, error: 'Session not found' };
 
     if (session.status !== 'lobby') {
-      // Allow reconnection to in-progress games
       const isExisting = session.players.some(p => p.user_id === userId);
       if (!isExisting) return { session: null, error: 'Session already in progress' };
 
@@ -53,7 +52,7 @@ class SessionManager {
           p.user_id === userId ? { ...p, is_connected: true } : p
         ),
       };
-      db.updateSession(updated);
+      await db.updateSession(updated);
       return { session: updated };
     }
 
@@ -62,14 +61,13 @@ class SessionManager {
     }
 
     if (session.players.some(p => p.user_id === userId)) {
-      // Already in session, just reconnect
       const updated = {
         ...session,
         players: session.players.map(p =>
           p.user_id === userId ? { ...p, is_connected: true } : p
         ),
       };
-      db.updateSession(updated);
+      await db.updateSession(updated);
       return { session: updated };
     }
 
@@ -88,12 +86,12 @@ class SessionManager {
       ],
       updated_at: Date.now(),
     };
-    db.updateSession(updated);
+    await db.updateSession(updated);
     return { session: updated };
   }
 
-  leaveSession(sessionId: string, userId: string) {
-    const session = db.getSession(sessionId);
+  async leaveSession(sessionId: string, userId: string) {
+    const session = await db.getSession(sessionId);
     if (!session) return;
 
     const updated = {
@@ -103,15 +101,14 @@ class SessionManager {
       ),
       updated_at: Date.now(),
     };
-    db.updateSession(updated);
+    await db.updateSession(updated);
   }
 
-  startGame(sessionId: string): { success: boolean; error?: string } {
-    const session = db.getSession(sessionId);
+  async startGame(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    const session = await db.getSession(sessionId);
     if (!session) return { success: false, error: 'Session not found' };
     if (session.status !== 'lobby') return { success: false, error: 'Session already started' };
 
-    // Verify all players have characters
     const allHaveCharacters = session.players.every(p => p.character_id !== null);
     if (!allHaveCharacters) {
       return { success: false, error: 'All players must create characters before starting' };
@@ -122,13 +119,12 @@ class SessionManager {
       status: 'in_progress',
       updated_at: Date.now(),
     };
-    db.updateSession(updated);
+    await db.updateSession(updated);
 
-    // Initialize game loop with characters
-    const game = this.getOrCreateGame(sessionId);
+    const game = await this.getOrCreateGame(sessionId);
     for (const player of session.players) {
       if (player.character_id) {
-        const character = db.getCharacter(player.character_id);
+        const character = await db.getCharacter(player.character_id);
         if (character) {
           game.addCharacter(character);
         }

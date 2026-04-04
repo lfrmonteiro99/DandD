@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { sessionManager } from '@/server/session-manager';
-import { generateNarration, decideMonsterAction, generateStartingScene } from '@/ai/dm';
+import { generateNarration, decideMonsterAction } from '@/ai/dm';
 import { getCurrentTurnEntity } from '@/engine/combat';
 
 // POST /api/game/action — Process a player action (with AI DM)
@@ -13,13 +13,13 @@ export async function POST(req: NextRequest) {
   try {
     const { session_id, action_type, target_id, text } = await req.json();
 
-    const session = db.getSession(session_id);
+    const session = await db.getSession(session_id);
     if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 });
 
-    const character = db.getCharacterByUserId(auth.user_id, session_id);
+    const character = await db.getCharacterByUserId(auth.user_id, session_id);
     if (!character) return NextResponse.json({ error: 'No character in session' }, { status: 400 });
 
-    const game = sessionManager.getOrCreateGame(session_id);
+    const game = await sessionManager.getOrCreateGame(session_id);
     const state = game.getState();
 
     // Handle combat actions
@@ -76,7 +76,6 @@ export async function POST(req: NextRequest) {
       } else if (dmResponse.dm_decisions?.check_required) {
         const check = dmResponse.dm_decisions.check_required;
         game.addNarration(dmResponse.narration, dmResponse.mood);
-        // Request a skill check from the player
         return NextResponse.json({
           state: game.getState(),
           narration: dmResponse.narration,
@@ -113,7 +112,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function processMonsterTurns(game: ReturnType<typeof sessionManager.getOrCreateGame>) {
+async function processMonsterTurns(game: Awaited<ReturnType<typeof sessionManager.getOrCreateGame>>) {
   let state = game.getState();
   let safetyCounter = 0;
 
@@ -123,10 +122,9 @@ async function processMonsterTurns(game: ReturnType<typeof sessionManager.getOrC
 
     const monster = state.combat.monsters.find(m => m.id === current.entity_id);
     if (!monster || monster.current_hp <= 0) {
-      // Skip dead monsters
       game.processMonsterTurn({
         monster_id: current.entity_id,
-        target_id: Object.keys(state.characters)[0],
+        target_id: Object.keys(state.characters)[0] || '',
       });
       state = game.getState();
       safetyCounter++;

@@ -36,7 +36,7 @@ export function setupWebSocket(io: SocketIOServer) {
     next();
   });
 
-  io.on('connection', (rawSocket) => {
+  io.on('connection', async (rawSocket) => {
     const socket = rawSocket as AuthenticatedSocket;
     const { user, sessionId } = socket.data;
 
@@ -49,7 +49,7 @@ export function setupWebSocket(io: SocketIOServer) {
     });
 
     // Handle join
-    const { session, error } = sessionManager.joinSession(sessionId, user.user_id, user.username);
+    const { session, error } = await sessionManager.joinSession(sessionId, user.user_id, user.username);
     if (error) {
       socket.emit('game:error', { message: error, code: 'JOIN_FAILED' });
       socket.disconnect();
@@ -57,15 +57,16 @@ export function setupWebSocket(io: SocketIOServer) {
     }
 
     io.to(sessionId).emit('player:joined', { user_id: user.user_id, username: user.username });
-    socket.emit('game:state_update', { game_state: sessionManager.getOrCreateGame(sessionId).getState() });
+    const game = await sessionManager.getOrCreateGame(sessionId);
+    socket.emit('game:state_update', { game_state: game.getState() });
 
     // ===========================
     // Player Actions
     // ===========================
 
     socket.on('player:action', async (data: { action_type: string; target_id?: string; details?: Record<string, unknown> }) => {
-      const game = sessionManager.getOrCreateGame(sessionId);
-      const character = db.getCharacterByUserId(user.user_id, sessionId);
+      const game = await sessionManager.getOrCreateGame(sessionId);
+      const character = await db.getCharacterByUserId(user.user_id, sessionId);
       if (!character) {
         socket.emit('game:error', { message: 'No character found', code: 'CHARACTER_REQUIRED' });
         return;
@@ -84,8 +85,8 @@ export function setupWebSocket(io: SocketIOServer) {
     });
 
     // Player ready toggle
-    socket.on('player:ready', (data: { ready: boolean }) => {
-      const session = db.getSession(sessionId);
+    socket.on('player:ready', async (data: { ready: boolean }) => {
+      const session = await db.getSession(sessionId);
       if (!session) return;
 
       const updated = {
@@ -94,7 +95,7 @@ export function setupWebSocket(io: SocketIOServer) {
           p.user_id === user.user_id ? { ...p, is_ready: data.ready } : p
         ),
       };
-      db.updateSession(updated);
+      await db.updateSession(updated);
       io.to(sessionId).emit('game:state_update', {
         session: {
           players: updated.players,
@@ -104,39 +105,39 @@ export function setupWebSocket(io: SocketIOServer) {
     });
 
     // Start game
-    socket.on('game:start', () => {
-      const session = db.getSession(sessionId);
+    socket.on('game:start', async () => {
+      const session = await db.getSession(sessionId);
       if (!session || session.created_by !== user.user_id) {
         socket.emit('game:error', { message: 'Only the host can start the game', code: 'UNAUTHORIZED' });
         return;
       }
 
-      const result = sessionManager.startGame(sessionId);
+      const result = await sessionManager.startGame(sessionId);
       if (!result.success) {
         socket.emit('game:error', { message: result.error, code: 'START_FAILED' });
       }
     });
 
     // Skill check roll
-    socket.on('player:roll', (data: { skill: string; dc?: number }) => {
-      const game = sessionManager.getOrCreateGame(sessionId);
-      const character = db.getCharacterByUserId(user.user_id, sessionId);
+    socket.on('player:roll', async (data: { skill: string; dc?: number }) => {
+      const game = await sessionManager.getOrCreateGame(sessionId);
+      const character = await db.getCharacterByUserId(user.user_id, sessionId);
       if (!character) return;
 
       game.processSkillCheck(character.id, data.skill, data.dc || 10);
     });
 
     // Rest actions
-    socket.on('rest:short', (data: { hit_dice: number }) => {
-      const game = sessionManager.getOrCreateGame(sessionId);
-      const character = db.getCharacterByUserId(user.user_id, sessionId);
+    socket.on('rest:short', async (data: { hit_dice: number }) => {
+      const game = await sessionManager.getOrCreateGame(sessionId);
+      const character = await db.getCharacterByUserId(user.user_id, sessionId);
       if (!character) return;
 
       game.processShortRest({ [character.id]: data.hit_dice || 0 });
     });
 
-    socket.on('rest:long', () => {
-      const game = sessionManager.getOrCreateGame(sessionId);
+    socket.on('rest:long', async () => {
+      const game = await sessionManager.getOrCreateGame(sessionId);
       game.processLongRest();
     });
 
@@ -151,8 +152,8 @@ export function setupWebSocket(io: SocketIOServer) {
     });
 
     // Disconnect
-    socket.on('disconnect', () => {
-      sessionManager.leaveSession(sessionId, user.user_id);
+    socket.on('disconnect', async () => {
+      await sessionManager.leaveSession(sessionId, user.user_id);
       io.to(sessionId).emit('player:disconnected', { user_id: user.user_id, username: user.username });
     });
   });

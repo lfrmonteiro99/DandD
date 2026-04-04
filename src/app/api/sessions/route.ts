@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       updated_at: Date.now(),
     };
 
-    db.createSession(session);
+    await db.createSession(session);
 
     return NextResponse.json({ session }, { status: 201 });
   } catch {
@@ -52,7 +52,8 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
-  const sessions = db.listSessions().filter(s =>
+  const allSessions = await db.listSessions();
+  const sessions = allSessions.filter(s =>
     s.status === 'lobby' || s.players.some(p => p.user_id === auth.user_id)
   );
 

@@ -15,15 +15,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 });
     }
 
-    if (db.getUserByEmail(email)) {
+    if (await db.getUserByEmail(email)) {
       return NextResponse.json({ error: 'Email already registered' }, { status: 409 });
     }
 
-    if (db.getUserByUsername(username)) {
+    if (await db.getUserByUsername(username)) {
       return NextResponse.json({ error: 'Username already taken' }, { status: 409 });
     }
 
-    const user = db.createUser({
+    const user = await db.createUser({
       id: uuid(),
       username,
       email,
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 86400, // 24 hours
+      maxAge: 86400,
     });
 
     return response;

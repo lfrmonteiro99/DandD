@@ -12,19 +12,19 @@ export async function POST(req: NextRequest) {
   try {
     const { session_id } = await req.json();
 
-    const session = db.getSession(session_id);
+    const session = await db.getSession(session_id);
     if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     if (session.created_by !== auth.user_id) {
       return NextResponse.json({ error: 'Only the host can start the game' }, { status: 403 });
     }
 
     // Start via session manager (validates characters exist)
-    const result = sessionManager.startGame(session_id);
+    const result = await sessionManager.startGame(session_id);
     if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
-    const game = sessionManager.getOrCreateGame(session_id);
+    const game = await sessionManager.getOrCreateGame(session_id);
 
     // Generate opening scene with AI
     const { scene, narration, mood } = await generateStartingScene(game.getState());

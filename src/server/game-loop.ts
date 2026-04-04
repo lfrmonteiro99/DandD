@@ -44,7 +44,7 @@ export class GameLoop {
   }
 
   private persist() {
-    db.saveGameState(this.sessionId, this.state);
+    db.saveGameState(this.sessionId, this.state).catch(() => {});
   }
 
   private emit(event: string, data: unknown) {

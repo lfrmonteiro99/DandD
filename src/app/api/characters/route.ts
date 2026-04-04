@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Ability scores must use the Standard Array: 15, 14, 13, 12, 10, 8' }, { status: 400 });
     }
 
-    const session = db.getSession(session_id);
+    const session = await db.getSession(session_id);
     if (!session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if player already has a character in this session
-    const existing = db.getCharacterByUserId(auth.user_id, session_id);
+    const existing = await db.getCharacterByUserId(auth.user_id, session_id);
     if (existing) {
       return NextResponse.json({ error: 'You already have a character in this session' }, { status: 409 });
     }
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     };
 
     const character = createCharacter(input);
-    db.createCharacter(character);
+    await db.createCharacter(character);
 
     // Update session player with character ID
     const updatedSession = {
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       ),
       updated_at: Date.now(),
     };
-    db.updateSession(updatedSession);
+    await db.updateSession(updatedSession);
 
     return NextResponse.json({ character }, { status: 201 });
   } catch {
