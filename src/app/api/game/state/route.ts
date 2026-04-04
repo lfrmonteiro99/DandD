@@ -18,6 +18,23 @@ export async function GET(req: NextRequest) {
   if (!isInSession) return NextResponse.json({ error: 'Not in this session' }, { status: 403 });
 
   const game = await sessionManager.getOrCreateGame(sessionId);
+  let state = game.getState();
+
+  // Ensure characters are loaded (serverless may have fresh instance)
+  if (session.status === 'in_progress' && Object.keys(state.characters).length === 0) {
+    const allChars = await db.getCharactersBySession(sessionId);
+    for (const c of allChars) {
+      game.addCharacter(c);
+    }
+    // Restore phase if it was reset
+    if (state.phase === 'lobby') {
+      const savedState = await db.getGameState(sessionId);
+      if (savedState) {
+        game.setState(savedState);
+      }
+    }
+    state = game.getState();
+  }
 
   return NextResponse.json({
     session: {
@@ -28,7 +45,7 @@ export async function GET(req: NextRequest) {
       max_players: session.max_players,
       created_by: session.created_by,
     },
-    game_state: game.getState(),
+    game_state: state,
     log: await db.getGameLogs(sessionId, 50),
   });
 }

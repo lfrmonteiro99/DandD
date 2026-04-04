@@ -78,6 +78,7 @@ export async function POST(req: NextRequest) {
       });
 
       game.addCharacter(companion);
+      await db.createCharacter(companion); // Persist to Redis
       existingClasses.add(template.class);
       companionsAdded++;
     }
@@ -96,6 +97,7 @@ export async function POST(req: NextRequest) {
             user_id: 'ai_companion',
           });
           game.addCharacter(companion);
+          await db.createCharacter(companion); // Persist to Redis
           companionsAdded++;
         }
       }
