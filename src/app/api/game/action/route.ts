@@ -56,8 +56,18 @@ export async function POST(req: NextRequest) {
         details: { text },
       });
 
-      // Get AI DM response
-      const dmResponse = await generateNarration(state, text, character.name);
+      // Get AI DM response (with fallback)
+      let dmResponse;
+      try {
+        dmResponse = await generateNarration(state, text, character.name);
+      } catch (err) {
+        console.error('AI narration failed, using fallback:', err);
+        dmResponse = {
+          narration: `${character.name} attempts to ${text}. The world around you responds...`,
+          dm_decisions: {},
+          mood: 'neutral',
+        };
+      }
 
       // Apply DM decisions
       if (dmResponse.dm_decisions?.encounter_trigger) {

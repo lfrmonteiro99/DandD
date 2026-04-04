@@ -28,15 +28,24 @@ export async function POST(req: NextRequest) {
       ? `succeeded on a ${skill} check (rolled ${result.total} vs DC ${dc})`
       : `failed a ${skill} check (rolled ${result.total} vs DC ${dc})`;
 
-    const dmResponse = await generateNarration(state, actionDesc, character.name);
-    game.addNarration(dmResponse.narration, dmResponse.mood);
+    let narrationText: string;
+    try {
+      const dmResponse = await generateNarration(state, actionDesc, character.name);
+      narrationText = dmResponse.narration;
+      game.addNarration(dmResponse.narration, dmResponse.mood);
+    } catch {
+      narrationText = result.success
+        ? `${character.name} succeeds! (Rolled ${result.total} vs DC ${dc})`
+        : `${character.name} fails. (Rolled ${result.total} vs DC ${dc})`;
+      game.addNarration(narrationText);
+    }
 
     return NextResponse.json({
       success: result.success,
       roll: result.roll,
       total: result.total,
       dc,
-      narration: dmResponse.narration,
+      narration: narrationText,
       state: game.getState(),
     });
   } catch (error) {
