@@ -3,50 +3,66 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { HPBar } from '@/components/ui/HPBar';
-import { DiceDisplay } from '@/components/ui/DiceDisplay';
 import { CombatView } from '@/components/combat/CombatView';
 import { useGameStore } from '@/store/game-store';
 import * as api from '@/lib/api-client';
-import { Character, GameState } from '@/engine/types';
 
 export function GameView({ sessionId }: { sessionId: string }) {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
-  const [initialized, setInitialized] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
-  const { gameState, setGameState, myCharacter, narration, addNarration, pendingCheck, setPendingCheck, auth } = useGameStore();
+  const {
+    gameState, setGameState, myCharacter, narration, addNarration,
+    pendingCheck, setPendingCheck, lastRenderedLogIndex, setLastRenderedLogIndex,
+  } = useGameStore();
 
-  // Load narration from game state log on first render
+  // Restore narration from game state log — runs when gameState changes
+  // Uses lastRenderedLogIndex to avoid duplicating entries
   useEffect(() => {
-    if (initialized || !gameState) return;
-    setInitialized(true);
+    if (!gameState?.recent_log) return;
+    const log = gameState.recent_log;
 
-    // If narration is empty but game state has log entries, restore them
-    if (narration.length === 0 && gameState.recent_log && gameState.recent_log.length > 0) {
-      for (const entry of gameState.recent_log) {
-        if (entry.type === 'narration') {
-          addNarration(entry.content);
-        } else if (entry.type === 'player_action' && entry.actor_name) {
-          addNarration(`**You:** ${entry.content.replace(entry.actor_name + ': ', '')}`);
-        } else if (entry.type === 'dialogue') {
-          addNarration(entry.content);
-        } else if (entry.type === 'combat_action') {
-          addNarration(entry.content);
-        } else if (entry.type === 'system') {
-          addNarration(`*${entry.content}*`);
-        }
+    if (log.length === 0) {
+      // No log entries — show scene description if available
+      if (narration.length === 0 && gameState.scene?.description) {
+        addNarration(gameState.scene.description);
+      }
+      return;
+    }
+
+    // Only render entries we haven't seen before
+    const startIndex = lastRenderedLogIndex + 1;
+    if (startIndex >= log.length) return;
+
+    const newEntries: string[] = [];
+    for (let i = startIndex; i < log.length; i++) {
+      const entry = log[i];
+      if (entry.type === 'narration') {
+        newEntries.push(entry.content);
+      } else if (entry.type === 'player_action' && entry.actor_name) {
+        newEntries.push(`**You:** ${entry.content.replace(entry.actor_name + ': ', '')}`);
+      } else if (entry.type === 'dialogue') {
+        newEntries.push(entry.content);
+      } else if (entry.type === 'combat_action') {
+        newEntries.push(entry.content);
+      } else if (entry.type === 'system') {
+        newEntries.push(`*${entry.content}*`);
       }
     }
 
-    // If still no narration and we have a scene, show scene description
-    if (narration.length === 0 && gameState.scene) {
-      addNarration(gameState.scene.description);
+    if (newEntries.length > 0) {
+      for (const entry of newEntries) {
+        addNarration(entry);
+      }
+      setLastRenderedLogIndex(log.length - 1);
     }
-  }, [gameState, initialized, narration.length, addNarration]);
+    // Track by last entry timestamp to detect content changes even when length is capped
+  }, [gameState?.recent_log?.length, gameState?.recent_log?.[gameState?.recent_log?.length - 1]?.timestamp]);
 
+  // Auto-scroll
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [narration]);
+  }, [narration.length]);
 
   // Poll for state updates
   useEffect(() => {
@@ -73,15 +89,16 @@ export function GameView({ sessionId }: { sessionId: string }) {
       const data = await api.sendAction(sessionId, 'free_text', text);
       if (data.narration) {
         addNarration(data.narration);
-      } else if (data.state) {
-        // No narration but state updated — show a generic response
-        addNarration('The DM considers your action...');
       }
       if (data.check_required) {
         setPendingCheck(data.check_required);
       }
       if (data.state) {
         setGameState(data.state);
+        // Update the rendered index to avoid double-rendering from the log
+        if (data.state.recent_log) {
+          setLastRenderedLogIndex(data.state.recent_log.length - 1);
+        }
       }
     } catch (err: any) {
       addNarration(`*Error: ${err.message}*`);
@@ -100,7 +117,12 @@ export function GameView({ sessionId }: { sessionId: string }) {
         : `**Skill Check:** ${skill} — Rolled ${data.total} vs DC ${dc} — **Failed.**`;
       addNarration(resultText);
       if (data.narration) addNarration(data.narration);
-      if (data.state) setGameState(data.state);
+      if (data.state) {
+        setGameState(data.state);
+        if (data.state.recent_log) {
+          setLastRenderedLogIndex(data.state.recent_log.length - 1);
+        }
+      }
     } catch (err: any) {
       addNarration(`*Error: ${err.message}*`);
     } finally {
@@ -142,6 +164,11 @@ export function GameView({ sessionId }: { sessionId: string }) {
 
         {/* Narration log */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+          {narration.length === 0 && (
+            <div className="text-gray-500 text-center py-8">
+              {gameState.scene?.description || 'The adventure begins...'}
+            </div>
+          )}
           {narration.map((text, i) => (
             <div key={i} className="narration-enter">
               {text.startsWith('**You:') ? (
@@ -154,6 +181,8 @@ export function GameView({ sessionId }: { sessionId: string }) {
                 </div>
               ) : text.startsWith('*Error') ? (
                 <div className="text-red-400 text-sm italic">{text.replace(/\*/g, '')}</div>
+              ) : text.startsWith('*') && text.endsWith('*') ? (
+                <div className="text-gray-500 text-sm italic text-center">{text.replace(/\*/g, '')}</div>
               ) : (
                 <div className="text-gray-200 leading-relaxed">
                   <span className="text-amber-500 font-bold mr-1">DM:</span>
@@ -197,15 +226,15 @@ export function GameView({ sessionId }: { sessionId: string }) {
             <Button type="submit" loading={loading} disabled={!inputText.trim()}>Send</Button>
           </form>
           <div className="flex gap-2 mt-2">
-            <Button variant="ghost" size="sm" onClick={() => { setInputText('I look around'); }}>Look Around</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setInputText('I search for traps'); }}>Search</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setInputText('I take a short rest'); }}>Short Rest</Button>
+            <Button variant="ghost" size="sm" onClick={() => setInputText('I look around')}>Look Around</Button>
+            <Button variant="ghost" size="sm" onClick={() => setInputText('I search for traps')}>Search</Button>
+            <Button variant="ghost" size="sm" onClick={() => setInputText('I take a short rest')}>Short Rest</Button>
           </div>
         </div>
       </div>
 
       {/* Sidebar — Party info */}
-      <div className="w-72 space-y-4">
+      <div className="w-72 space-y-4 hidden md:block">
         {/* Phase indicator */}
         <div className="bg-gray-900/60 border border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500 uppercase">Phase</div>

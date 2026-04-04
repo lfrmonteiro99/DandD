@@ -51,8 +51,12 @@ async function kGet<T>(key: string): Promise<T | null> {
   const redis = getRedis();
   if (redis) {
     try {
-      return await redis.get<T>(key);
-    } catch {
+      const val = await redis.get<T>(key);
+      if (val !== null && val !== undefined) mem.set(key, val); // cache locally
+      return val;
+    } catch (err) {
+      console.error(`Redis GET error for key "${key}":`, err);
+      // Fall back to local cache
       return mem.get(key) as T ?? null;
     }
   }
@@ -66,7 +70,13 @@ async function kSet(key: string, value: unknown): Promise<void> {
     try {
       await redis.set(key, value, { ex: EXPIRY });
     } catch (err) {
-      console.error('Redis set error:', err);
+      console.error(`Redis SET error for key "${key}":`, err);
+      // Retry once
+      try {
+        await redis.set(key, value, { ex: EXPIRY });
+      } catch (retryErr) {
+        console.error(`Redis SET retry failed for key "${key}":`, retryErr);
+      }
     }
   }
 }
