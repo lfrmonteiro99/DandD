@@ -21,8 +21,37 @@ interface User {
 // Redis Client
 // ===========================
 
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+// Auto-detect Upstash env vars (Vercel creates them with various prefixes)
+function findEnv(...candidates: string[]): string | undefined {
+  for (const name of candidates) {
+    if (process.env[name]) return process.env[name];
+  }
+  // Fallback: scan all env vars for matching patterns
+  for (const [key, value] of Object.entries(process.env)) {
+    for (const candidate of candidates) {
+      const suffix = candidate.split('_').slice(-1)[0]; // URL or TOKEN
+      if (key.toUpperCase().includes('UPSTASH') && key.toUpperCase().endsWith(suffix) && value) {
+        return value;
+      }
+    }
+  }
+  return undefined;
+}
+
+const UPSTASH_URL = findEnv(
+  'UPSTASH_REDIS_REST_URL',
+  'KV_REST_API_URL',
+  'UPSTASH_REDIS_REST_KV_REST_URL',
+  'UPSTASH_REDIS_REST_KV_URL',
+  'UPSTASH_REDIS_REST_REDIS_URL'
+);
+const UPSTASH_TOKEN = findEnv(
+  'UPSTASH_REDIS_REST_TOKEN',
+  'KV_REST_API_TOKEN',
+  'UPSTASH_REDIS_REST_KV_REST_TOKEN',
+  'UPSTASH_REDIS_REST_KV_TOKEN',
+  'UPSTASH_REDIS_REST_REDIS_TOKEN'
+);
 const USE_REDIS = !!(UPSTASH_URL && UPSTASH_TOKEN);
 
 let _redis: Redis | null = null;
