@@ -21,44 +21,16 @@ interface User {
 // Redis Client
 // ===========================
 
-// Find the REST API URL (must start with https://)
-function findRestUrl(): string | undefined {
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value && value.startsWith('https://') && key.toUpperCase().includes('UPSTASH')) {
-      return value;
-    }
-  }
-  // Also check standard names
-  return process.env.KV_REST_API_URL || undefined;
-}
+// Your exact Vercel env var names
+const UPSTASH_URL =
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_URL ||
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.KV_REST_API_URL;
 
-// Find the REST API TOKEN (not read-only, not a URL)
-function findRestToken(): string | undefined {
-  // Try exact known names first (most specific to least)
-  const candidates = [
-    'UPSTASH_REDIS_REST_TOKEN',
-    'UPSTASH_REDIS_REST_KV_REST_API_TOKEN',
-    'KV_REST_API_TOKEN',
-  ];
-  for (const name of candidates) {
-    if (process.env[name]) return process.env[name];
-  }
-  // Fallback: find any UPSTASH var with TOKEN that isn't READ_ONLY
-  for (const [key, value] of Object.entries(process.env)) {
-    if (
-      value &&
-      key.toUpperCase().includes('UPSTASH') &&
-      key.toUpperCase().includes('TOKEN') &&
-      !key.toUpperCase().includes('READ_ONLY')
-    ) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-const UPSTASH_URL = findRestUrl();
-const UPSTASH_TOKEN = findRestToken();
+const UPSTASH_TOKEN =
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN ||
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.KV_REST_API_TOKEN;
 const USE_REDIS = !!(UPSTASH_URL && UPSTASH_TOKEN);
 
 let _redis: Redis | null = null;
