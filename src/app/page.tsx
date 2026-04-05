@@ -17,6 +17,7 @@ export default function Home() {
     clearNarration,
   } = useGameStore();
   const [loading, setLoading] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
   const [sessionView, setSessionView] = useState<'lobby' | 'character' | 'waiting' | 'game'>('lobby');
 
   // Check for existing auth
@@ -101,13 +102,14 @@ export default function Home() {
   async function handleStartGame() {
     if (!session) return;
     setLoading(true);
+    setStartError(null);
     try {
       const data = await api.startGame(session.id);
       setGameState(data.state);
       if (data.narration) addNarration(data.narration);
       setSession({ ...session, status: 'in_progress' });
     } catch (err: any) {
-      alert(err.message);
+      setStartError(err.message || 'Failed to start the adventure. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -211,15 +213,29 @@ export default function Home() {
               </div>
 
               {session.created_by === auth.userId && (
-                <Button
-                  onClick={handleStartGame}
-                  loading={loading}
-                  disabled={!canStart}
-                  className="w-full"
-                  size="lg"
-                >
-                  Start Adventure {readyPlayers < session.max_players ? `(${readyPlayers} player${readyPlayers > 1 ? 's' : ''} + AI companions)` : ''}
-                </Button>
+                <div className="space-y-3">
+                  <Button
+                    onClick={handleStartGame}
+                    loading={loading}
+                    disabled={!canStart}
+                    className="w-full"
+                    size="lg"
+                  >
+                    {loading
+                      ? 'Generating adventure world...'
+                      : `Start Adventure ${readyPlayers < session.max_players ? `(${readyPlayers} player${readyPlayers > 1 ? 's' : ''} + AI companions)` : ''}`}
+                  </Button>
+                  {loading && (
+                    <p className="text-sm text-gray-500 animate-pulse">
+                      The AI Dungeon Master is crafting your opening scene. This may take up to 30 seconds...
+                    </p>
+                  )}
+                  {startError && (
+                    <div className="bg-red-900/30 border border-red-800 rounded-lg p-3 text-sm text-red-400">
+                      {startError}
+                    </div>
+                  )}
+                </div>
               )}
 
               {session.created_by !== auth.userId && (

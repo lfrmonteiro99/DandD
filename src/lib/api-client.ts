@@ -1,20 +1,32 @@
 const BASE_URL = '';
 
-async function fetchAPI(path: string, options: RequestInit = {}) {
+async function fetchAPI(path: string, options: RequestInit & { timeoutMs?: number } = {}) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  const { timeoutMs, ...fetchOptions } = options;
+  const timeout = timeoutMs ?? 30_000;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
 
   let response: Response;
   try {
     response = await fetch(`${BASE_URL}${path}`, {
-      ...options,
+      ...fetchOptions,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers,
+        ...fetchOptions.headers,
       },
     });
   } catch (err: any) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out. Please try again.');
+    }
     throw new Error(`Network error: ${err.message}`);
+  } finally {
+    clearTimeout(timer);
   }
 
   let data: any;
@@ -92,6 +104,7 @@ export async function startGame(sessionId: string) {
   return fetchAPI('/api/game/start', {
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId }),
+    timeoutMs: 60_000,
   });
 }
 
@@ -108,6 +121,7 @@ export async function sendAction(sessionId: string, actionType: string, text?: s
       text,
       target_id: targetId,
     }),
+    timeoutMs: 60_000,
   });
 }
 
@@ -115,5 +129,6 @@ export async function sendRoll(sessionId: string, skill: string, dc: number) {
   return fetchAPI('/api/game/roll', {
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId, skill, dc }),
+    timeoutMs: 60_000,
   });
 }
